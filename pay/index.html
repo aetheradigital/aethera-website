@@ -45,6 +45,9 @@ h1,h2,h3{font-family:"Raleway","Avenir Next",sans-serif;font-weight:300;letter-s
 .rise{animation:rise 1.1s cubic-bezier(.2,.8,.2,1) both}
 @keyframes rise{from{opacity:0;transform:translateY(40px);filter:blur(8px)}to{opacity:1;transform:none;filter:none}}
 
+.testbar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:60;padding:10px 18px;border-radius:999px;background:#F6E7A1;color:#000;font-size:14px;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.4);text-align:center;max-width:calc(100% - 32px)}
+.notice{margin:28px 0 0;display:inline-block;padding:14px 20px;border-radius:16px;background:var(--lav);color:#000;font-weight:600;font-size:17px;max-width:560px}
+[hidden]{display:none !important}
 /* options */
 .opts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;padding-bottom:clamp(64px,8vw,120px)}
 .opt{position:relative;display:flex;flex-direction:column;gap:22px;min-height:460px;padding:36px;border:1px solid var(--line);border-radius:32px;background:#0B0B0E;overflow:hidden;transition:border-color .5s,transform .5s cubic-bezier(.2,.8,.2,1)}
@@ -88,6 +91,7 @@ h1,h2,h3{font-family:"Raleway","Avenir Next",sans-serif;font-weight:300;letter-s
 </style>
 </head>
 <body>
+<div class="testbar" role="note" hidden>Test mode: these payment links use Stripe test data. No real charges.</div>
 <header class="nav">
 <div class="nav-in">
 <a class="logo" href="/" aria-label="Aethera Digital home"><img src="/assets/icon.png" alt="" width="34" height="34"></a>
@@ -108,6 +112,7 @@ h1,h2,h3{font-family:"Raleway","Avenir Next",sans-serif;font-weight:300;letter-s
 <div class="wrap">
 <p class="eyebrow rise">Client payments</p>
 <h1 class="rise" style="animation-delay: .1s">Simple, secure <em>billing.</em></h1>
+<p class="notice" role="status" hidden></p>
 <p class="lead rise" style="animation-delay: .2s">Pay an invoice, start your partnership or manage your billing details. Every payment is processed by Stripe; we never see or store your card or bank details.</p>
 </div>
 </section>
@@ -181,9 +186,9 @@ h1,h2,h3{font-family:"Raleway","Avenir Next",sans-serif;font-weight:300;letter-s
 <script>
 /* Stripe-hosted links. Fill these in once Stripe is set up; empty values keep the fallback links above. */
 window.AETHERA_PAY = {
-  invoice: '',      // Payment Link: customer chooses amount + invoice number field
-  partnership: '',  // Payment Link: $2,250/mo subscription
-  portal: ''        // Customer portal login link
+  invoice: 'https://buy.stripe.com/test_cNiaEW2A3d6uex48Ic7wA01',            // Payment Link: customer enters amount + invoice number
+  partnership: 'https://buy.stripe.com/test_5kQ28qfmPgiGgFc9Mg7wA00',        // Payment Link: $2,250/mo Startup Partnership
+  portal: 'https://billing.stripe.com/p/login/test_5kQ28qfmPgiGgFc9Mg7wA00'  // Customer portal login
 };
 (function () {
   var cfg = window.AETHERA_PAY || {};
@@ -191,6 +196,11 @@ window.AETHERA_PAY = {
     var url = cfg[a.getAttribute('data-pay')];
     if (url) { a.href = url; a.rel = 'noopener'; }
   });
+  var isTest = Object.keys(cfg).some(function (k) { return /\/test_/.test(cfg[k] || ''); });
+  if (isTest) document.querySelector('.testbar').hidden = false;
+  var st = new URLSearchParams(location.search).get('status');
+  var msg = { paid: 'Payment received. Thank you! A receipt is on its way to your inbox.', started: 'Welcome aboard! Your partnership is active and a receipt is on its way to your inbox.' }[st];
+  if (msg) { var n = document.querySelector('.notice'); n.textContent = msg; n.hidden = false; }
   document.querySelectorAll('.opt').forEach(function (el) {
     el.addEventListener('pointermove', function (e) {
       var b = el.getBoundingClientRect();
