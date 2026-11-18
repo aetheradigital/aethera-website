@@ -55,7 +55,7 @@ position:relative;background:var(--ink);color:var(--paper);font-family:"Avenir N
 .pill.ghost:hover{background:#fff;color:#000}
 
 /* hero */
-.hero{position:relative;height:clamp(720px,100vh,980px);overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding-bottom:112px}
+.hero{position:relative;height:clamp(780px,100vh,980px);overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding-bottom:112px}
 .hero::after{content:"";position:absolute;left:0;right:0;bottom:0;height:55%;background:linear-gradient(to top,rgba(0,0,0,.72),rgba(0,0,0,0));pointer-events:none}
 .hero-row,.hero-top,.mark-big{z-index:2}
 .spot{position:absolute;inset:0;background:radial-gradient(520px circle at var(--cx,50%) var(--cy,40%),rgba(200,182,255,.16),transparent 65%);pointer-events:none}
@@ -64,8 +64,8 @@ position:relative;background:var(--ink);color:var(--paper);font-family:"Avenir N
 .orb{width:var(--s);height:var(--s);border-radius:50%;background:var(--c);filter:blur(90px);opacity:.42;animation:float 14s ease-in-out infinite alternate}
 @keyframes float{0%{transform:translate(0,0) scale(1)}50%{transform:translate(60px,-40px) scale(1.12)}100%{transform:translate(-40px,30px) scale(.94)}}
 .grid-lines{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);background-size:120px 120px;mask-image:radial-gradient(ellipse at 50% 45%,#000 20%,transparent 70%);-webkit-mask-image:radial-gradient(ellipse at 50% 45%,#000 20%,transparent 70%);transform:perspective(900px) rotateX(calc(var(--ph)*40deg)) scale(calc(1 + var(--ph)*.4));transform-origin:50% 100%;pointer-events:none}
-.mark-big{position:absolute;left:0;right:0;top:50%;display:flex;justify-content:center;transform:translateY(-66%) scale(calc(1 + var(--ph)*.9*var(--int,1)));opacity:calc(1 - var(--ph)*1.5);filter:blur(calc(var(--ph)*10px));pointer-events:none}
-.mark-big img{display:block;width:clamp(300px,60vw,940px);height:auto;animation:rise 1.6s cubic-bezier(.2,.8,.2,1) both}
+.mark-big{position:absolute;left:0;right:0;top:46%;display:flex;justify-content:center;transform:translateY(-66%) scale(calc(1 + var(--ph)*.9*var(--int,1)));opacity:calc(1 - var(--ph)*1.5);filter:blur(calc(var(--ph)*10px));pointer-events:none}
+.mark-big img{display:block;width:clamp(300px,min(60vw,90vh),940px);height:auto;animation:rise 1.6s cubic-bezier(.2,.8,.2,1) both}
 @keyframes rise{from{transform:translateY(70%) rotateX(-70deg);opacity:0;filter:blur(12px)}to{transform:none;opacity:1;filter:none}}
 .hero-top{position:absolute;top:128px;left:0;right:0}
 .hero-row{position:relative;display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:40px;transform:translateY(calc(var(--ph)*-120px));opacity:calc(1 - var(--ph)*1.8)}
@@ -241,6 +241,7 @@ position:relative;background:var(--ink);color:var(--paper);font-family:"Avenir N
 @keyframes bar{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 @keyframes rise3d{from{opacity:0;transform:translateY(140px) rotateX(24deg) scale(.9)}to{opacity:1;transform:none}}
 
+@media (max-width:1100px){.badge{display:none}}
 @media (max-width:1080px){
 .ae[data-mode="static"] .track{grid-template-columns:repeat(2,minmax(0,1fr))}
 .tilts{grid-template-columns:minmax(0,1fr)}
