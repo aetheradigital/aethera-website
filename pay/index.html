@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Client Payments — Aethera Digital</title>
+<meta name="description" content="Pay an Aethera Digital invoice, start a partnership, or manage your billing. Payments are processed securely by Stripe.">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#000000">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+<link rel="apple-touch-icon" href="/assets/favicon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;1,300&amp;family=Nunito+Sans:wght@400;600;700&amp;display=swap">
+<style>
+:root{--lav:#C8B6FF;--peach:#FFC4A8;--pink:#FFB3D1;--sky:#AFCBFF;--sage:#CFE8B4;--mute:#A3A3AD;--line:rgba(255,255,255,.14)}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:#000;color:#fff;font-family:"Avenir Next","Avenir","Nunito Sans",system-ui,sans-serif;font-size:18px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:clip}
+::selection{background:var(--lav);color:#000}
+a{color:var(--lav)}a:hover{color:#fff}
+h1,h2,h3{font-family:"Raleway","Avenir Next",sans-serif;font-weight:300;letter-spacing:-.02em;line-height:1.04;margin:0}
+.wrap{width:100%;max-width:1240px;margin:0 auto;padding-inline:clamp(20px,5vw,72px)}
+.eyebrow{font-size:13px;letter-spacing:.28em;text-transform:uppercase;color:var(--mute);font-weight:600;margin:0}
+
+/* nav */
+.nav{position:fixed;top:0;left:0;right:0;z-index:50}
+.nav-in{display:flex;align-items:center;justify-content:space-between;gap:24px;margin:16px clamp(12px,3vw,40px);padding:10px 12px 10px 18px;border:1px solid var(--line);border-radius:999px;background:rgba(0,0,0,.55);backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4)}
+.logo{display:flex;align-items:center;min-height:44px;color:#fff;text-decoration:none}
+.links{display:flex;gap:4px;flex-wrap:wrap}
+.links a{color:#fff;text-decoration:none;font-size:14px;padding:12px 16px;border-radius:999px;transition:background .3s}
+.links a:hover{background:rgba(255,255,255,.1);color:#fff}
+.pill{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:48px;padding:0 24px;border-radius:999px;background:#fff;color:#000;text-decoration:none;font-weight:700;font-size:15px;border:0;cursor:pointer;font-family:inherit;transition:background .3s,color .3s,transform .4s cubic-bezier(.2,.8,.2,1)}
+.pill:hover{background:var(--c,var(--lav));color:#000;transform:translateY(-2px)}
+.pill svg{transition:transform .4s cubic-bezier(.2,.8,.2,1)}
+.pill:hover svg{transform:translate(3px,-3px)}
+
+/* hero */
+.hero{position:relative;padding:clamp(150px,20vh,220px) 0 clamp(64px,8vw,110px);overflow:hidden}
+.orb{position:absolute;border-radius:50%;filter:blur(100px);opacity:.38;pointer-events:none;animation:float 16s ease-in-out infinite alternate}
+@keyframes float{50%{transform:translate(50px,-30px) scale(1.1)}100%{transform:translate(-30px,20px) scale(.95)}}
+.hero h1{font-size:clamp(48px,7vw,104px);max-width:12ch;margin-top:24px}
+.hero h1 em{font-style:italic;color:var(--lav)}
+.hero p.lead{max-width:560px;margin:28px 0 0;color:#D6D6DC;font-size:20px}
+.rise{animation:rise 1.1s cubic-bezier(.2,.8,.2,1) both}
+@keyframes rise{from{opacity:0;transform:translateY(40px);filter:blur(8px)}to{opacity:1;transform:none;filter:none}}
+
+/* options */
+.opts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;padding-bottom:clamp(64px,8vw,120px)}
+.opt{position:relative;display:flex;flex-direction:column;gap:22px;min-height:460px;padding:36px;border:1px solid var(--line);border-radius:32px;background:#0B0B0E;overflow:hidden;transition:border-color .5s,transform .5s cubic-bezier(.2,.8,.2,1)}
+.opt::before{content:"";position:absolute;inset:0;background:radial-gradient(420px circle at var(--gx,50%) var(--gy,0%),color-mix(in srgb,var(--c) 26%,transparent),transparent 60%);opacity:0;transition:opacity .5s;pointer-events:none}
+.opt:hover{border-color:var(--c);transform:translateY(-6px)}
+.opt:hover::before{opacity:1}
+.opt > *{position:relative}
+.opt .idx{font-size:13px;letter-spacing:.28em;color:var(--c);font-weight:700;margin:0}
+.opt h2{font-size:34px;font-weight:400}
+.opt p{margin:0;color:#C9C9D1;font-size:17px}
+.opt .price{font-family:"Raleway",sans-serif;font-weight:200;font-size:64px;line-height:.9;letter-spacing:-.04em;color:#fff}
+.opt .price small{font-size:.3em;font-weight:500;letter-spacing:0}
+.opt ul{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px;font-size:16px;color:#E4E4EA}
+.opt li{display:flex;gap:10px;align-items:flex-start}
+.opt li svg{flex:none;margin-top:5px}
+.opt .act{margin-top:auto;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.opt .note{font-size:14px;color:var(--mute)}
+.ico{width:56px;height:56px;color:var(--c)}
+
+/* how */
+.how{border-top:1px solid var(--line);padding:clamp(72px,9vw,130px) 0}
+.how-grid{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(32px,6vw,96px);align-items:start}
+.how h2{font-size:clamp(36px,4.4vw,64px);max-width:13ch;margin-top:20px}
+.facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.fact{padding:28px;border-radius:24px;background:#F4F2EE;color:#000}
+.fact h3{font-size:24px;font-weight:600;margin-bottom:8px}
+.fact p{margin:0;font-size:16px;color:#33333B}
+.fact.ach{background:var(--lav)}
+.fact.ach p{color:#1D1D22}
+
+/* footer */
+.foot{border-top:1px solid var(--line);padding:56px 0 40px}
+.foot-row{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:24px;color:var(--mute);font-size:14px}
+.foot-row nav{display:flex;flex-wrap:wrap;gap:8px 24px}
+.foot-row nav a{color:#fff;text-decoration:none;padding:10px 0}
+.foot-row nav a:hover{color:var(--lav)}
+
+@media (max-width:1000px){.opts{grid-template-columns:minmax(0,1fr)}.opt{min-height:0}.how-grid{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:700px){.orb{opacity:.22}.links{display:none}.facts{grid-template-columns:minmax(0,1fr)}.opt{padding:28px}.hero p.lead{font-size:18px}}
+@media (prefers-reduced-motion:reduce){*,*::before{animation:none !important;transition:none !important}}
+</style>
+</head>
+<body>
+<header class="nav">
+<div class="nav-in">
+<a class="logo" href="/" aria-label="Aethera Digital home"><img src="/assets/icon.png" alt="" width="34" height="34"></a>
+<nav class="links" aria-label="Primary">
+<a href="/#services">Services</a>
+<a href="/#approach">Approach</a>
+<a href="/#package">Package</a>
+<a href="/#contact">Contact</a>
+</nav>
+<a class="pill" href="/#contact">Let’s talk</a>
+</div>
+</header>
+
+<main>
+<section class="hero">
+<div class="orb" style="width: 520px; height: 520px; background: #C8B6FF; left: -8%; top: -10%" aria-hidden="true"></div>
+<div class="orb" style="width: 460px; height: 460px; background: #FFC4A8; right: -6%; top: 20%; animation-delay: -6s" aria-hidden="true"></div>
+<div class="wrap">
+<p class="eyebrow rise">Client payments</p>
+<h1 class="rise" style="animation-delay: .1s">Simple, secure <em>billing.</em></h1>
+<p class="lead rise" style="animation-delay: .2s">Pay an invoice, start your partnership or manage your billing details. Every payment is processed by Stripe; we never see or store your card or bank details.</p>
+</div>
+</section>
+
+<section class="wrap opts" aria-label="Payment options">
+<article class="opt" style="--c: #C8B6FF">
+<svg class="ico" viewBox="0 0 56 56" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="10" y="8" width="36" height="40" rx="6"></rect><path d="M18 20h20M18 28h20M18 36h11"></path></svg>
+<p class="idx">01 — INVOICE</p>
+<h2>Pay an invoice</h2>
+<p>Have an invoice from us? Enter the amount and your invoice number, then pay by bank transfer or card.</p>
+<div class="act">
+<a class="pill" data-pay="invoice" href="mailto:hello@aetheradigital.com?subject=Invoice%20payment%20link">Pay an invoice
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 13L13 3M5 3h8v8"></path></svg></a>
+<span class="note">Invoices we email you also include a direct pay link.</span>
+</div>
+</article>
+
+<article class="opt" style="--c: #FFC4A8">
+<svg class="ico" viewBox="0 0 56 56" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 40l12-12 9 9 19-21"></path><path d="M38 16h10v10"></path></svg>
+<p class="idx">02 — PARTNERSHIP</p>
+<h2>Startup Partnership</h2>
+<p class="price">$2,250<small>/mo</small></p>
+<ul>
+<li><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#FFC4A8" stroke-width="2" aria-hidden="true"><path d="M3 8.5l3 3 7-7"></path></svg>Month-to-month, billed automatically</li>
+<li><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#FFC4A8" stroke-width="2" aria-hidden="true"><path d="M3 8.5l3 3 7-7"></path></svg>Brand, website, SEO and AI search, lead follow-up, reporting</li>
+<li><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#FFC4A8" stroke-width="2" aria-hidden="true"><path d="M3 8.5l3 3 7-7"></path></svg>Ad spend and third-party costs billed separately</li>
+</ul>
+<div class="act">
+<a class="pill" data-pay="partnership" href="/#contact">Start your partnership
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 13L13 3M5 3h8v8"></path></svg></a>
+<span class="note">Only start once we’ve agreed on scope together.</span>
+</div>
+</article>
+
+<article class="opt" style="--c: #AFCBFF">
+<svg class="ico" viewBox="0 0 56 56" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="8" y="14" width="40" height="28" rx="5"></rect><path d="M8 22h40M15 34h8"></path></svg>
+<p class="idx">03 — BILLING</p>
+<h2>Manage billing</h2>
+<p>Update your card or bank account, download receipts and invoices, or review your plan. Sign in with the email we bill.</p>
+<div class="act">
+<a class="pill" data-pay="portal" href="mailto:hello@aetheradigital.com?subject=Billing%20question">Open billing portal
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 13L13 3M5 3h8v8"></path></svg></a>
+<span class="note">We’ll email you a one-time sign-in code.</span>
+</div>
+</article>
+</section>
+
+<section class="how" aria-labelledby="how-h">
+<div class="wrap how-grid">
+<div>
+<p class="eyebrow">Good to know</p>
+<h2 id="how-h">Paying Aethera, explained.</h2>
+</div>
+<div class="facts">
+<div class="fact ach"><h3>Bank transfer preferred</h3><p>Choose “US bank account” at checkout to pay by ACH. It’s the simplest option for recurring retainers.</p></div>
+<div class="fact"><h3>Cards accepted</h3><p>Visa, Mastercard, Amex, Discover, Apple Pay and Google Pay.</p></div>
+<div class="fact"><h3>Secure by Stripe</h3><p>Checkout happens on Stripe’s encrypted pages. Your details never touch our servers.</p></div>
+<div class="fact"><h3>Questions?</h3><p>Email <a href="mailto:hello@aetheradigital.com" style="color: #000">hello@aetheradigital.com</a> and we’ll sort it out.</p></div>
+</div>
+</div>
+</section>
+</main>
+
+<footer class="foot">
+<div class="wrap foot-row">
+<span>© 2026 Aethera Digital · Creative Direction. Connected Tools. Ongoing Progress.</span>
+<nav aria-label="Footer"><a href="/">Home</a><a href="/#services">Services</a><a href="/#contact">Contact</a></nav>
+</div>
+</footer>
+
+<script>
+/* Stripe-hosted links. Fill these in once Stripe is set up; empty values keep the fallback links above. */
+window.AETHERA_PAY = {
+  invoice: '',      // Payment Link: customer chooses amount + invoice number field
+  partnership: '',  // Payment Link: $2,250/mo subscription
+  portal: ''        // Customer portal login link
+};
+(function () {
+  var cfg = window.AETHERA_PAY || {};
+  document.querySelectorAll('[data-pay]').forEach(function (a) {
+    var url = cfg[a.getAttribute('data-pay')];
+    if (url) { a.href = url; a.rel = 'noopener'; }
+  });
+  document.querySelectorAll('.opt').forEach(function (el) {
+    el.addEventListener('pointermove', function (e) {
+      var b = el.getBoundingClientRect();
+      el.style.setProperty('--gx', (e.clientX - b.left) + 'px');
+      el.style.setProperty('--gy', (e.clientY - b.top) + 'px');
+    });
+  });
+})();
+</script>
+</body>
+</html>
