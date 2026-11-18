@@ -12,6 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;1,300&amp;family=Nunito+Sans:wght@400;600;700&amp;display=swap">
+<script src="https://js.stripe.com/endive/stripe.js"></script>
 <style>
 :root{--lav:#C8B6FF;--peach:#FFC4A8;--pink:#FFB3D1;--sky:#AFCBFF;--sage:#CFE8B4;--mute:#A3A3AD;--line:rgba(255,255,255,.14)}
 *{box-sizing:border-box}
@@ -67,6 +68,35 @@ h1,h2,h3{font-family:"Raleway","Avenir Next",sans-serif;font-weight:300;letter-s
 .opt .note{font-size:14px;color:var(--mute)}
 .ico{width:56px;height:56px;color:var(--c)}
 
+/* invoice form */
+.inv{display:flex;flex-direction:column;gap:16px;margin-top:auto}
+.fld{display:flex;flex-direction:column;gap:6px}
+.fld label{font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:var(--mute);font-weight:600;transition:color .3s}
+.fld:focus-within label{color:var(--c,var(--lav))}
+.fld input{font-family:"Raleway","Avenir Next",sans-serif;font-size:22px;color:#fff;caret-color:var(--lav);background:linear-gradient(90deg,var(--lav),var(--pink),var(--peach)) no-repeat 0 100%/0% 2px transparent;border:0;border-bottom:1px solid rgba(255,255,255,.22);border-radius:0;padding:8px 0 10px;outline:none;width:100%;transition:background-size .6s cubic-bezier(.2,.8,.2,1),border-color .3s}
+.fld input:focus{background-size:100% 2px;border-color:transparent}
+.fld input::placeholder{color:#8E8E99;font-weight:300}
+.money{display:flex;align-items:baseline;gap:6px;font-family:"Raleway",sans-serif;font-size:22px;color:#C9C9D1}
+.inv-err{margin:0;color:#FFB3B3;font-size:15px}
+.inv .act{margin-top:8px}
+.pill[disabled]{opacity:.7;cursor:wait}
+
+/* checkout panel */
+.co{padding-bottom:clamp(64px,8vw,120px);scroll-margin-top:96px}
+.co-card{position:relative;border:1px solid rgba(200,182,255,.4);border-radius:32px;background:#0B0B0E;padding:clamp(20px,3vw,40px);box-shadow:0 0 0 1px rgba(200,182,255,.1),0 50px 140px -60px rgba(200,182,255,.5);animation:rise .8s cubic-bezier(.2,.8,.2,1) both}
+.co-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:24px}
+.co-head h2{font-size:clamp(28px,3vw,40px);margin-top:10px}
+.co-close{display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:50%;border:1px solid var(--line);background:transparent;color:#fff;cursor:pointer;transition:background .3s,transform .4s}
+.co-close:hover{background:rgba(255,255,255,.1);transform:rotate(90deg)}
+.co-body{position:relative;min-height:420px;border-radius:20px;background:#fff;overflow:hidden;padding:8px}
+#checkout-mount{position:relative;z-index:1}
+.co-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:10px}
+.co-loading span{width:10px;height:10px;border-radius:50%;background:var(--lav);animation:dot 1s ease-in-out infinite}
+.co-loading span:nth-child(2){animation-delay:.15s;background:var(--pink)}.co-loading span:nth-child(3){animation-delay:.3s;background:var(--peach)}
+@keyframes dot{50%{transform:translateY(-10px);opacity:.5}}
+.co.ready .co-loading{display:none}
+.co-foot{display:flex;align-items:center;gap:8px;margin:18px 0 0;font-size:14px;color:var(--mute)}
+
 /* how */
 .how{border-top:1px solid var(--line);padding:clamp(72px,9vw,130px) 0}
 .how-grid{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(32px,6vw,96px);align-items:start}
@@ -86,12 +116,12 @@ h1,h2,h3{font-family:"Raleway","Avenir Next",sans-serif;font-weight:300;letter-s
 .foot-row nav a:hover{color:var(--lav)}
 
 @media (max-width:1000px){.opts{grid-template-columns:minmax(0,1fr)}.opt{min-height:0}.how-grid{grid-template-columns:minmax(0,1fr)}}
-@media (max-width:700px){.orb{opacity:.22}.links{display:none}.facts{grid-template-columns:minmax(0,1fr)}.opt{padding:28px}.hero p.lead{font-size:18px}}
+@media (max-width:700px){.testbar{font-size:12px;padding:8px 14px;bottom:10px}.co-card{padding:16px;border-radius:24px}.co-body{padding:0;border-radius:16px}.co-head h2{font-size:26px}.orb{opacity:.22}.links{display:none}.facts{grid-template-columns:minmax(0,1fr)}.opt{padding:28px}.hero p.lead{font-size:18px}}
 @media (prefers-reduced-motion:reduce){*,*::before{animation:none !important;transition:none !important}}
 </style>
 </head>
 <body>
-<div class="testbar" role="note" hidden>Test mode: these payment links use Stripe test data. No real charges.</div>
+<div class="testbar" role="note" hidden>Test mode · no real charges</div>
 <header class="nav">
 <div class="nav-in">
 <a class="logo" href="/" aria-label="Aethera Digital home"><img src="/assets/icon.png" alt="" width="34" height="34"></a>
@@ -122,12 +152,17 @@ h1,h2,h3{font-family:"Raleway","Avenir Next",sans-serif;font-weight:300;letter-s
 <svg class="ico" viewBox="0 0 56 56" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="10" y="8" width="36" height="40" rx="6"></rect><path d="M18 20h20M18 28h20M18 36h11"></path></svg>
 <p class="idx">01 — INVOICE</p>
 <h2>Pay an invoice</h2>
-<p>Have an invoice from us? Enter the amount and your invoice number, then pay by bank transfer or card.</p>
+<p>Have an invoice from us? Enter the amount and invoice number, then pay by bank transfer or card.</p>
+<form class="inv" id="inv-form" novalidate>
+<div class="fld"><label for="inv-amount">Amount (USD)</label><div class="money"><span aria-hidden="true">$</span><input id="inv-amount" name="amount" inputmode="decimal" autocomplete="off" placeholder="0.00" required></div></div>
+<div class="fld"><label for="inv-number">Invoice number</label><input id="inv-number" name="invoice_number" autocomplete="off" maxlength="40" placeholder="e.g. AD-1042" required></div>
+<p class="inv-err" role="alert" hidden></p>
 <div class="act">
-<a class="pill" data-pay="invoice" href="mailto:hello@aetheradigital.com?subject=Invoice%20payment%20link">Pay an invoice
-<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 13L13 3M5 3h8v8"></path></svg></a>
+<button class="pill" type="submit" data-pay="invoice">Continue to payment
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 13L13 3M5 3h8v8"></path></svg></button>
 <span class="note">Invoices we email you also include a direct pay link.</span>
 </div>
+</form>
 </article>
 
 <article class="opt" style="--c: #FFC4A8">
@@ -141,7 +176,7 @@ h1,h2,h3{font-family:"Raleway","Avenir Next",sans-serif;font-weight:300;letter-s
 <li><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#FFC4A8" stroke-width="2" aria-hidden="true"><path d="M3 8.5l3 3 7-7"></path></svg>Ad spend and third-party costs billed separately</li>
 </ul>
 <div class="act">
-<a class="pill" data-pay="partnership" href="/#contact">Start your partnership
+<a class="pill" data-pay="partnership" href="/#contact" role="button">Start your partnership
 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 13L13 3M5 3h8v8"></path></svg></a>
 <span class="note">Only start once we’ve agreed on scope together.</span>
 </div>
@@ -158,6 +193,20 @@ h1,h2,h3{font-family:"Raleway","Avenir Next",sans-serif;font-weight:300;letter-s
 <span class="note">We’ll email you a one-time sign-in code.</span>
 </div>
 </article>
+</section>
+
+<section class="wrap co" id="checkout" aria-labelledby="co-h" hidden>
+<div class="co-card">
+<div class="co-head">
+<div><p class="eyebrow" id="co-eyebrow">Secure checkout</p><h2 id="co-h">Checkout</h2></div>
+<button class="co-close" type="button" aria-label="Close checkout"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"></path></svg></button>
+</div>
+<div class="co-body">
+<div class="co-loading" aria-hidden="true"><span></span><span></span><span></span></div>
+<div id="checkout-mount"></div>
+</div>
+<p class="co-foot"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="2"></rect><path d="M5 7V5a3 3 0 016 0v2"></path></svg>Encrypted and processed by Stripe. Your payment details never touch our servers.</p>
+</div>
 </section>
 
 <section class="how" aria-labelledby="how-h">
@@ -184,23 +233,100 @@ h1,h2,h3{font-family:"Raleway","Avenir Next",sans-serif;font-weight:300;letter-s
 </footer>
 
 <script>
-/* Stripe-hosted links. Fill these in once Stripe is set up; empty values keep the fallback links above. */
+/* Fallback Stripe-hosted links, used only if embedded checkout is unavailable. */
 window.AETHERA_PAY = {
-  invoice: 'https://buy.stripe.com/test_cNiaEW2A3d6uex48Ic7wA01',            // Payment Link: customer enters amount + invoice number
-  partnership: 'https://buy.stripe.com/test_5kQ28qfmPgiGgFc9Mg7wA00',        // Payment Link: $2,250/mo Startup Partnership
-  portal: 'https://billing.stripe.com/p/login/test_5kQ28qfmPgiGgFc9Mg7wA00'  // Customer portal login
+  invoice: 'https://buy.stripe.com/test_cNiaEW2A3d6uex48Ic7wA01',
+  partnership: 'https://buy.stripe.com/test_5kQ28qfmPgiGgFc9Mg7wA00',
+  portal: 'https://billing.stripe.com/p/login/test_5kQ28qfmPgiGgFc9Mg7wA00'
 };
 (function () {
-  var cfg = window.AETHERA_PAY || {};
-  document.querySelectorAll('[data-pay]').forEach(function (a) {
-    var url = cfg[a.getAttribute('data-pay')];
-    if (url) { a.href = url; a.rel = 'noopener'; }
+  var links = window.AETHERA_PAY;
+  var cfg = { enabled: false };
+  var stripe = null, checkout = null;
+  var panel = document.getElementById('checkout');
+  var portalBtn = document.querySelector('[data-pay="portal"]');
+  var partnerBtn = document.querySelector('[data-pay="partnership"]');
+  var invForm = document.getElementById('inv-form');
+  var invErr = invForm.querySelector('.inv-err');
+  var invBtn = invForm.querySelector('[data-pay="invoice"]');
+
+  function showTest(on) { document.querySelector('.testbar').hidden = !on; }
+  function useLinks() {
+    partnerBtn.href = links.partnership; partnerBtn.removeAttribute('role');
+    portalBtn.href = links.portal;
+    showTest(/\/test_/.test(links.partnership));
+  }
+  useLinks();
+
+  fetch('/api/config', { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.ok ? r.json() : { enabled: false }; })
+    .then(function (c) {
+      cfg = c || { enabled: false };
+      if (cfg.portalUrl) portalBtn.href = cfg.portalUrl;
+      if (cfg.enabled && window.Stripe) {
+        stripe = window.Stripe(cfg.publishableKey);
+        showTest(!!cfg.testMode);
+        partnerBtn.setAttribute('href', '#checkout');
+      }
+    })
+    .catch(function () { /* static hosting: keep links */ });
+
+  function closeCheckout() {
+    if (checkout) { try { checkout.destroy(); } catch (e) {} checkout = null; }
+    panel.hidden = true; panel.classList.remove('ready');
+  }
+  panel.querySelector('.co-close').addEventListener('click', function () {
+    closeCheckout();
+    document.querySelector('.opts').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
-  var isTest = Object.keys(cfg).some(function (k) { return /\/test_/.test(cfg[k] || ''); });
-  if (isTest) document.querySelector('.testbar').hidden = false;
-  var st = new URLSearchParams(location.search).get('status');
-  var msg = { paid: 'Payment received. Thank you! A receipt is on its way to your inbox.', started: 'Welcome aboard! Your partnership is active and a receipt is on its way to your inbox.' }[st];
-  if (msg) { var n = document.querySelector('.notice'); n.textContent = msg; n.hidden = false; }
+
+  async function openCheckout(payload, title, eyebrow) {
+    closeCheckout();
+    document.getElementById('co-h').textContent = title;
+    document.getElementById('co-eyebrow').textContent = eyebrow;
+    panel.hidden = false;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    var fetchClientSecret = async function () {
+      var r = await fetch('/api/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      var d = await r.json().catch(function () { return {}; });
+      if (!r.ok || !d.clientSecret) throw new Error(d.error || 'Checkout is unavailable right now.');
+      return d.clientSecret;
+    };
+    try {
+      checkout = await stripe.createEmbeddedCheckoutPage({ fetchClientSecret: fetchClientSecret });
+      checkout.mount('#checkout-mount');
+      panel.classList.add('ready');
+    } catch (e) {
+      closeCheckout();
+      throw e;
+    }
+  }
+
+  partnerBtn.addEventListener('click', function (e) {
+    if (!stripe) return; // follow the hosted link
+    e.preventDefault();
+    openCheckout({ plan: 'partnership' }, 'Startup Partnership · $2,250/mo', 'Secure checkout').catch(function () {
+      window.location.href = links.partnership;
+    });
+  });
+
+  invForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    invErr.hidden = true;
+    var raw = String(invForm.amount.value || '').replace(/[$,\s]/g, '');
+    var amount = Number(raw);
+    var inv = String(invForm.invoice_number.value || '').trim();
+    var problem = !raw || !isFinite(amount) || amount < 50 || amount > 50000 ? 'Enter an amount between $50 and $50,000.'
+      : !/^[A-Za-z0-9#._\- ]{1,40}$/.test(inv) ? 'Enter your invoice number.' : '';
+    if (problem) { invErr.textContent = problem; invErr.hidden = false; return; }
+    if (!stripe) { window.location.href = links.invoice; return; }
+    invBtn.disabled = true;
+    var label = '$' + amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    openCheckout({ plan: 'invoice', amount: amount, invoice_number: inv }, 'Invoice ' + inv + ' · ' + label, 'Secure checkout')
+      .catch(function (err) { invErr.textContent = err.message; invErr.hidden = false; })
+      .then(function () { invBtn.disabled = false; });
+  });
+
   document.querySelectorAll('.opt').forEach(function (el) {
     el.addEventListener('pointermove', function (e) {
       var b = el.getBoundingClientRect();

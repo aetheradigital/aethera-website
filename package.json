@@ -1,0 +1,12 @@
+{
+  "name": "aethera-website",
+  "version": "1.0.0",
+  "private": true,
+  "description": "aetheradigital.com: static site plus embedded Stripe checkout",
+  "main": "server.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/server.test.js"
+  }
+}

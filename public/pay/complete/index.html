@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payment status — Aethera Digital</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#000000">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,200;0,300;0,400;0,600;1,300&amp;family=Nunito+Sans:wght@400;600;700&amp;display=swap">
+<style>
+:root{--lav:#C8B6FF;--peach:#FFC4A8;--pink:#FFB3D1;--mute:#A3A3AD;--line:rgba(255,255,255,.14)}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:#000;color:#fff;font-family:"Avenir Next","Avenir","Nunito Sans",system-ui,sans-serif;font-size:18px;line-height:1.6;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;overflow-x:clip}
+::selection{background:var(--lav);color:#000}
+a{color:var(--lav)}a:hover{color:#fff}
+.nav{display:flex;justify-content:space-between;align-items:center;padding:20px clamp(20px,5vw,72px)}
+.nav a.logo{display:flex;min-height:44px;align-items:center}
+main{flex:1;display:flex;align-items:center;justify-content:center;padding:40px clamp(20px,5vw,72px) 80px;position:relative}
+.orb{position:absolute;width:520px;height:520px;border-radius:50%;filter:blur(110px);opacity:.3;pointer-events:none}
+.card{position:relative;width:100%;max-width:640px;padding:clamp(28px,5vw,56px);border:1px solid var(--line);border-radius:32px;background:#0B0B0E;animation:rise 1s cubic-bezier(.2,.8,.2,1) both}
+@keyframes rise{from{opacity:0;transform:translateY(30px);filter:blur(8px)}to{opacity:1;transform:none;filter:none}}
+.eyebrow{font-size:13px;letter-spacing:.28em;text-transform:uppercase;color:var(--mute);font-weight:600;margin:0}
+h1{font-family:"Raleway",sans-serif;font-weight:300;letter-spacing:-.02em;line-height:1.05;font-size:clamp(40px,6vw,64px);margin:18px 0 0}
+h1 em{font-style:italic;color:var(--lav)}
+p.body{color:#D6D6DC;margin:20px 0 0}
+dl{display:grid;grid-template-columns:auto 1fr;gap:10px 24px;margin:28px 0 0;padding:20px 0 0;border-top:1px solid var(--line);font-size:16px}
+dt{color:var(--mute)}dd{margin:0;color:#fff}
+.btns{display:flex;flex-wrap:wrap;gap:12px;margin-top:32px}
+.pill{display:inline-flex;align-items:center;gap:10px;min-height:48px;padding:0 24px;border-radius:999px;background:#fff;color:#000;text-decoration:none;font-weight:700;font-size:15px;transition:background .3s,transform .4s cubic-bezier(.2,.8,.2,1)}
+.pill:hover{background:var(--lav);color:#000;transform:translateY(-2px)}
+.pill.ghost{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.35)}
+.pill.ghost:hover{background:#fff;color:#000}
+.check{width:64px;height:64px;border-radius:50%;background:var(--lav);display:flex;align-items:center;justify-content:center;color:#000}
+.check svg{stroke-dasharray:30;stroke-dashoffset:30;animation:draw .8s .3s ease forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+.dots{display:flex;gap:10px}.dots span{width:10px;height:10px;border-radius:50%;background:var(--lav);animation:dot 1s ease-in-out infinite}
+.dots span:nth-child(2){animation-delay:.15s;background:var(--pink)}.dots span:nth-child(3){animation-delay:.3s;background:var(--peach)}
+@keyframes dot{50%{transform:translateY(-10px);opacity:.5}}
+[hidden]{display:none !important}
+@media (prefers-reduced-motion:reduce){*{animation:none !important}.check svg{stroke-dashoffset:0}}
+</style>
+</head>
+<body>
+<header class="nav"><a class="logo" href="/" aria-label="Aethera Digital home"><img src="/assets/icon.png" alt="" width="34" height="34"></a><a href="/pay/" style="color: #fff; text-decoration: none; font-size: 15px; padding: 12px 0">Client payments</a></header>
+<main>
+<div class="orb" style="background: #C8B6FF; left: 10%; top: 0" aria-hidden="true"></div>
+<div class="orb" style="background: #FFC4A8; right: 5%; bottom: 0" aria-hidden="true"></div>
+
+<section class="card" id="loading" aria-live="polite">
+<p class="eyebrow">Client payments</p>
+<h1>Confirming your payment…</h1>
+<div class="dots" style="margin-top: 28px" aria-hidden="true"><span></span><span></span><span></span></div>
+</section>
+
+<section class="card" id="success" hidden aria-live="polite">
+<div class="check" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+<h1 id="s-title">Thank you. <em>You’re all set.</em></h1>
+<p class="body" id="s-body">Your payment went through. A receipt is on its way to your inbox.</p>
+<dl id="s-details"></dl>
+<div class="btns"><a class="pill" href="/">Back to home</a><a class="pill ghost" href="/pay/">Client payments</a></div>
+</section>
+
+<section class="card" id="retry" hidden aria-live="polite">
+<p class="eyebrow">Client payments</p>
+<h1>Payment <em>not completed.</em></h1>
+<p class="body">Your payment didn’t go through and you haven’t been charged. You can try again, or email <a href="mailto:hello@aetheradigital.com">hello@aetheradigital.com</a> and we’ll help.</p>
+<div class="btns"><a class="pill" href="/pay/">Try again</a></div>
+</section>
+</main>
+<script>
+(function () {
+  var id = new URLSearchParams(location.search).get('session_id');
+  function show(which) { ['loading', 'success', 'retry'].forEach(function (k) { document.getElementById(k).hidden = k !== which; }); }
+  function row(dl, k, v) { var dt = document.createElement('dt'); dt.textContent = k; var dd = document.createElement('dd'); dd.textContent = v; dl.appendChild(dt); dl.appendChild(dd); }
+  if (!id) { show('retry'); return; }
+  fetch('/api/session-status?session_id=' + encodeURIComponent(id), { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.json(); })
+    .then(function (s) {
+      if (s.status !== 'complete') { show('retry'); return; }
+      var dl = document.getElementById('s-details');
+      var pending = s.payment_status === 'unpaid';
+      if (s.mode === 'subscription') {
+        document.getElementById('s-title').innerHTML = 'Welcome aboard. <em>Let’s build.</em>';
+        document.getElementById('s-body').textContent = pending
+          ? 'Your Startup Partnership is set up. Bank payments take a few business days to clear; we’ll email your receipt once it does.'
+          : 'Your Startup Partnership is active. A receipt is on its way, and we’ll reach out within one business day to schedule kickoff.';
+        row(dl, 'Plan', 'Startup Partnership, month-to-month');
+      } else {
+        if (pending) document.getElementById('s-body').textContent = 'Your bank payment is processing and usually clears in a few business days. We’ll email your receipt once it does.';
+        if (s.invoice_number) row(dl, 'Invoice', s.invoice_number);
+      }
+      if (typeof s.amount_total === 'number') row(dl, s.mode === 'subscription' ? 'Monthly' : 'Amount', (s.amount_total / 100).toLocaleString('en-US', { style: 'currency', currency: (s.currency || 'usd').toUpperCase() }));
+      if (s.customer_email) row(dl, 'Receipt to', s.customer_email);
+      show('success');
+    })
+    .catch(function () { show('retry'); });
+})();
+</script>
+</body>
+</html>
