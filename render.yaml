@@ -20,6 +20,10 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: DESK_COLLECTOR_TOKEN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
       - key: PAYMENTS_NOTIFY_URL

@@ -23,6 +23,9 @@
  *   STRIPE_WEBHOOK_SECRET   whsec_... signing secret of the webhook endpoint (/api/stripe/webhook)
  *   PAYMENTS_NOTIFY_URL     optional: Apps Script web app URL (payments sheet, alerts and invoice emails)
  *   PAYMENTS_NOTIFY_TOKEN   optional: shared token checked by the Apps Script (PAYMENTS_TOKEN script property)
+ *   DESK_COLLECTOR_TOKEN    shared secret the Apps Script collector sends (Authorization: Bearer ...)
+ *   ANTHROPIC_API_KEY       Claude API key used to turn client emails and meeting notes into suggested to-dos
+ *   ANTHROPIC_MODEL         optional model override (default claude-haiku-5-5)
  *   DATABASE_URL            Postgres connection string for the Aethera Desk (Render internal URL). Without it the Desk
  *                           keeps data in memory only (lost on restart) and says so on screen.
  */
@@ -597,6 +600,9 @@ async function deskOverview(req, res) {
     follow_ups: clients.filter(function (c) { return c.next_date && c.status !== 'past'; }).sort(function (a, b) { return a.next_date < b.next_date ? -1 : 1; }).slice(0, 8).map(function (c) {
       return { id: c.id, client: c.company || c.name, next_step: c.next_step || '', next_date: c.next_date, overdue: c.next_date < today, status: c.status };
     }),
+    suggestions: (await desk.allOf('suggestion')).filter(function (x) { return x.status === 'new'; })
+      .sort(function (a, b) { return a.created_at < b.created_at ? 1 : -1; }).slice(0, 12)
+      .map(function (x) { return Object.assign({}, x, { client: name(x.client_id) }); }),
     billing: null
   };
   if (SECRET) {
@@ -635,12 +641,12 @@ async function deskApi(req, res, url) {
   if (mm && m === 'GET') {
     const c = await desk.get('client', mm[1]);
     if (!c) return json(res, 404, { error: 'Client not found.' });
-    const [projects, tasks, approvals, reports, files] = await Promise.all([
+    const [projects, tasks, approvals, reports, files, suggestions] = await Promise.all([
       desk.list('project', { client_id: c.id }), desk.list('task', { client_id: c.id }), desk.list('approval', { client_id: c.id }),
-      desk.list('report', { client_id: c.id }), desk.listFiles(c.id)]);
+      desk.list('report', { client_id: c.id }), desk.listFiles(c.id), desk.list('suggestion', { client_id: c.id })]);
     let invoices = []; let invoiceError = null;
     try { invoices = await stripeInvoicesFor(c.email, originOf(req)); } catch (e) { invoiceError = 'Couldn’t load invoices from Stripe.'; }
-    return json(res, 200, { client: c, projects: projects, tasks: tasks, approvals: approvals, reports: reports.sort(function (a, b) { return a.period < b.period ? 1 : -1; }), files: files, invoices: invoices, invoice_error: invoiceError });
+    return json(res, 200, { client: c, suggestions: suggestions.filter(function (x) { return x.status === 'new'; }).reverse(), projects: projects, tasks: tasks, approvals: approvals, reports: reports.sort(function (a, b) { return a.period < b.period ? 1 : -1; }), files: files, invoices: invoices, invoice_error: invoiceError });
   }
 
   // apply a checklist template to a project
@@ -658,6 +664,11 @@ async function deskApi(req, res, url) {
     }
     return json(res, 200, { tasks: created });
   }
+
+  // suggested to-dos
+  mm = p.match(/^\/suggestions\/(sug_[A-Za-z0-9_-]+)\/accept$/);
+  if (mm && m === 'POST') return acceptSuggestion(req, res, mm[1]);
+  if (p === '/collector' && m === 'GET') return collectorStatus(req, res);
 
   // files
   if (p === '/files' && m === 'POST') {
@@ -684,7 +695,7 @@ async function deskApi(req, res, url) {
   if (mm && m === 'DELETE') { await desk.removeFile(mm[1]); return json(res, 200, { ok: true }); }
 
   // generic records: /clients, /projects, /tasks, /approvals, /reports (+ /:id)
-  mm = p.match(/^\/(clients|projects|tasks|approvals|reports)(?:\/([a-z]{3}_[A-Za-z0-9_-]+))?$/);
+  mm = p.match(/^\/(clients|projects|tasks|approvals|reports|suggestions)(?:\/([a-z]{3}_[A-Za-z0-9_-]+))?$/);
   if (!mm) return json(res, 404, { error: 'Not found' });
   const type = deskLib.PLURAL[mm[1]]; const id = mm[2];
   if (!id && m === 'GET') {
@@ -730,6 +741,125 @@ async function deskApi(req, res, url) {
   }
   if (id && m === 'DELETE') { await desk.remove(type, id); return json(res, 200, { ok: true }); }
   return json(res, 405, { error: 'Method not allowed' });
+}
+
+// ---------- Suggested to-dos: Apps Script collector -> Claude -> Desk ----------
+const collectorLib = require('./lib/collector');
+const COLLECTOR_TOKEN = process.env.DESK_COLLECTOR_TOKEN || '';
+const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || '';
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-5-5';
+const ANTHROPIC_BASE = (process.env.ANTHROPIC_API_BASE || 'https://api.anthropic.com').replace(/\/+$/, '');
+const ingestQueue = [];
+let ingesting = false;
+const collectorRuns = new Map(); // by -> { at, received, queued }
+const ingestStats = { processed: 0, suggestions: 0, errors: 0, lastError: '' };
+
+function collectorAuthorized(req) {
+  const h = String(req.headers.authorization || '');
+  return Boolean(COLLECTOR_TOKEN) && h.startsWith('Bearer ') && safeEqual(h.slice(7), COLLECTOR_TOKEN);
+}
+
+async function processIngest() {
+  if (ingesting) return;
+  ingesting = true;
+  try {
+    while (ingestQueue.length) {
+      const job = ingestQueue.shift();
+      try {
+        const n = await ingestOne(job);
+        ingestStats.processed++; ingestStats.suggestions += n;
+      } catch (e) {
+        ingestStats.errors++; ingestStats.lastError = e.message;
+        console.error('collector_ingest_failed', job.item.key, e.message);
+      }
+    }
+  } finally { ingesting = false; }
+}
+
+async function ingestOne(job) {
+  const item = job.item;
+  if (await desk.seen(item.key)) return 0;
+  const clients = (await desk.allOf('client')).filter(function (c) { return c.status !== 'past'; });
+  const candidates = collectorLib.matchClients(item, clients);
+  if (!candidates.length) { await desk.markSeen(item.key); return 0; }
+  const found = await collectorLib.extract(item, candidates, { model: ANTHROPIC_MODEL, apiKey: ANTHROPIC_KEY, apiBase: ANTHROPIC_BASE, today: new Date().toISOString().slice(0, 10) });
+  let created = 0;
+  for (const s of found) {
+    const existing = (await desk.list('suggestion', { client_id: s.client_id }))
+      .some(function (x) { return x.status === 'new' && collectorLib.norm(x.title) === collectorLib.norm(s.title); });
+    if (existing) continue;
+    const v = deskLib.validate('suggestion', {
+      client_id: s.client_id, title: s.title, due: s.due, owner: s.owner, evidence: s.evidence, status: 'new',
+      source: item.kind === 'meeting' ? 'meeting' : 'email', source_url: item.url, source_title: item.title, source_date: item.date,
+      source_key: item.key, collected_by: job.by
+    }, false);
+    if (v.error) continue;
+    await desk.create('suggestion', v.data, { client_id: s.client_id });
+    created++;
+  }
+  await desk.markSeen(item.key);
+  console.log('collector_ingested ' + JSON.stringify({ key: item.key, kind: item.kind, clients: candidates.length, suggestions: created }));
+  return created;
+}
+
+async function collectorApi(req, res, url) {
+  if (!COLLECTOR_TOKEN) return json(res, 503, { error: 'Collector is not set up (DESK_COLLECTOR_TOKEN).' });
+  if (!collectorAuthorized(req)) { console.warn('collector_unauthorized'); return json(res, 401, { error: 'Unauthorized' }); }
+  try { await deskInit(); } catch (e) { return json(res, 503, { error: 'Desk database unavailable.' }); }
+  const p = url.pathname;
+  if (p === '/api/collector/clients' && req.method === 'GET') {
+    return json(res, 200, { clients: collectorLib.collectorClients(await desk.allOf('client')), ai: Boolean(ANTHROPIC_KEY) });
+  }
+  if (p === '/api/collector/items' && req.method === 'POST') {
+    if (!ANTHROPIC_KEY) return json(res, 503, { error: 'ANTHROPIC_API_KEY is not set on the server.' });
+    const body = await readJson(req, 2 * 1024 * 1024);
+    if (!body || !Array.isArray(body.items)) return json(res, 400, { error: 'Invalid request.' });
+    const by = clip(body.by, 200).toLowerCase() || 'unknown';
+    let queued = 0; let skipped = 0;
+    for (const raw of body.items.slice(0, 100)) {
+      const item = {
+        kind: raw.kind === 'meeting' ? 'meeting' : 'email',
+        key: clip(raw.key, 300), url: /^https:\/\//.test(String(raw.url || '')) ? clip(raw.url, 500) : '',
+        title: clip(raw.title, 300), date: clip(raw.date, 40), from: clip(raw.from, 1000), to: clip(raw.to, 2000), cc: clip(raw.cc, 2000),
+        attendees: clip(raw.attendees, 2000), text: String(raw.text || '').slice(0, 20000)
+      };
+      if (!item.key || !item.text) { skipped++; continue; }
+      if (await desk.seen(item.key) || ingestQueue.some(function (j) { return j.item.key === item.key; })) { skipped++; continue; }
+      ingestQueue.push({ item: item, by: by }); queued++;
+    }
+    collectorRuns.set(by, { by: by, at: new Date().toISOString(), received: body.items.length, queued: queued });
+    setImmediate(processIngest);
+    return json(res, 200, { ok: true, queued: queued, skipped: skipped });
+  }
+  return json(res, 404, { error: 'Not found' });
+}
+
+async function acceptSuggestion(req, res, id) {
+  const s = await desk.get('suggestion', id);
+  if (!s) return json(res, 404, { error: 'Suggestion not found.' });
+  if (s.status !== 'new') return json(res, 409, { error: 'That suggestion was already handled.' });
+  const body = (await readJson(req, 4096)) || {};
+  let project = null;
+  if (body.project_id) {
+    project = await desk.get('project', String(body.project_id));
+    if (!project || project.client_id !== s.client_id) return json(res, 400, { error: 'Choose one of this client’s projects.' });
+  } else {
+    const projects = await desk.list('project', { client_id: s.client_id });
+    project = projects.find(function (p) { return p.name === 'General to-dos'; }) ||
+      await desk.create('project', { client_id: s.client_id, name: 'General to-dos', status: 'in_progress', description: 'Follow-ups from email and meetings.' }, { client_id: s.client_id });
+  }
+  const title = clip(body.title || s.title, 300);
+  const task = await desk.create('task', { project_id: project.id, title: title, done: false, due: s.due || null, owner: s.owner || null, position: Date.now() / 1e3 },
+    { client_id: s.client_id, project_id: project.id });
+  const updated = await desk.update('suggestion', s.id, { status: 'added', task_id: task.id });
+  return json(res, 200, { suggestion: updated, task: task, project: { id: project.id, name: project.name } });
+}
+
+function collectorStatus(req, res) {
+  return json(res, 200, {
+    token: Boolean(COLLECTOR_TOKEN), ai: Boolean(ANTHROPIC_KEY), model: ANTHROPIC_MODEL,
+    runs: Array.from(collectorRuns.values()), queue: ingestQueue.length + (ingesting ? 1 : 0), stats: ingestStats
+  });
 }
 
 async function adminApi(req, res, url) {
@@ -943,6 +1073,7 @@ const server = http.createServer(async function (req, res) {
     if (p === '/api/invoice-lookup' && req.method === 'POST') return await lookupInvoice(req, res);
     if (p === '/api/subscribe' && req.method === 'POST') return await subscribe(req, res);
     if (p === '/api/stripe/webhook' && req.method === 'POST') return await stripeWebhook(req, res);
+    if (p.startsWith('/api/collector/')) return await collectorApi(req, res, url);
     if (p.startsWith('/api/admin/')) return await adminApi(req, res, url);
     if (p.startsWith('/api/')) return json(res, 404, { error: 'Not found' });
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });

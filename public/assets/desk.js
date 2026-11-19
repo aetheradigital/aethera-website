@@ -139,6 +139,7 @@
       { name: 'monthly_value', label: 'Monthly value ($)', inputmode: 'decimal', half: true, placeholder: 'e.g. 2250' }, { name: 'source', label: 'Lead source', half: true, placeholder: 'Referral, website, event…' },
       { name: 'services', label: 'Services', type: 'checks', options: META.services },
       { name: 'next_step', label: 'Next step', half: true, placeholder: 'e.g. Send proposal' }, { name: 'next_date', label: 'Next step date', type: 'date', half: true },
+      { name: 'aliases', label: 'Also match emails & meetings by', placeholder: 'Other emails, domains or short names, e.g. pat.lee@gmail.com, baconroofing.net, Bacon' },
       { name: 'notes', label: 'Notes', type: 'textarea', rows: 4, max: 10000 }
     ];
   };
@@ -228,10 +229,52 @@
   }
   window.addEventListener('hashchange', route);
 
+  // ---------- suggested to-dos ----------
+  function suggestionList(items, showClient, onChange) {
+    var ul = h('ul', { class: 'list' });
+    items.forEach(function (s) {
+      var li = h('li', null,
+        h('span', { class: 'src ' + (s.source || 'email'), title: s.source === 'meeting' ? 'From meeting notes' : 'From email', 'aria-hidden': 'true', text: s.source === 'meeting' ? '◉' : '✉' }),
+        h('span', { class: 'grow' },
+          h('span', { class: 't', text: s.title }),
+          h('span', { class: 'm' }, [showClient ? s.client : null, s.source_title ? '“' + s.source_title + '”' : null, s.due ? 'Due ' + day(s.due) : null].filter(Boolean).join(' · ') + ' ',
+            s.source_url ? h('a', { href: s.source_url, target: '_blank', rel: 'noopener', text: 'View source ↗' }) : null),
+          s.evidence ? h('span', { class: 'm ev', text: s.evidence }) : null),
+        h('div', { class: 'sugacts' },
+          h('button', { class: 'pill small', type: 'button', text: 'Add', title: 'Add to General to-dos', onclick: function (e) { accept(s, null, e.target); } }),
+          h('button', { class: 'pill small ghost', type: 'button', text: 'Add to…', onclick: function () { acceptTo(s); } }),
+          h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Dismiss suggestion', title: 'Dismiss', text: '×', onclick: function () {
+            desk('PATCH', '/suggestions/' + s.id, { status: 'dismissed' }).then(function () { li.remove(); toast('Dismissed'); if (onChange) onChange(); }).catch(function (x) { toast(x.message, true); });
+          } })));
+      ul.appendChild(li);
+      function accept(sg, body, b) {
+        if (b) b.disabled = true;
+        desk('POST', '/suggestions/' + sg.id + '/accept', body || {}).then(function (r) { li.remove(); toast('Added to ' + r.project.name); if (onChange) onChange(); })
+          .catch(function (x) { if (b) b.disabled = false; toast(x.message, true); });
+      }
+      function acceptTo(sg) {
+        desk('GET', '/projects?client_id=' + sg.client_id).then(function (r) {
+          var opts = [['', 'General to-dos']].concat(r.items.filter(function (p) { return p.status !== 'done' && p.name !== 'General to-dos'; }).map(function (p) { return [p.id, p.name]; }));
+          modal({ title: 'Add to-do', submit: 'Add task', values: { title: sg.title, project_id: '' }, fields: [{ name: 'title', label: 'Task' }, { name: 'project_id', label: 'Project', type: 'select', options: opts }],
+            onSubmit: function (v) { if (!v.title) throw new Error('Enter a task.'); return desk('POST', '/suggestions/' + sg.id + '/accept', { title: v.title, project_id: v.project_id || null }).then(function (x) { li.remove(); toast('Added to ' + x.project.name); if (onChange) onChange(); }); } });
+        });
+      }
+    });
+    return ul;
+  }
+  function syncLine(st) {
+    if (!st) return null;
+    if (!st.token || !st.ai) return h('small', { text: 'Inbox sync not set up' });
+    if (!st.runs.length) return h('small', { text: 'Waiting for the first inbox check' });
+    var last = st.runs.slice().sort(function (a, b) { return a.at < b.at ? 1 : -1; })[0];
+    return h('small', { title: st.runs.map(function (r) { return r.by + ' · ' + new Date(r.at).toLocaleString(); }).join('\n'), text: 'Checked ' + new Date(last.at).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) + (st.queue ? ' · reading ' + st.queue : '') });
+  }
+
   // ---------- overview ----------
   function overview() {
     loading();
-    desk('GET', '/overview').then(function (o) {
+    Promise.all([desk('GET', '/overview'), desk('GET', '/collector').catch(function () { return null; })]).then(function (both) {
+      var o = both[0]; var sync = both[1];
       var hour = new Date().getHours();
       var hello = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
       var b = o.billing;
@@ -244,6 +287,8 @@
           tile('Monthly recurring', usd(o.monthly_recurring), 'From active clients'),
           tile('Open invoices', b ? money(b.open_total) : '—', b ? b.open_count + ' open' + (b.overdue_count ? ' · ' + b.overdue_count + ' overdue' : '') : 'Stripe not connected', b && b.overdue_count),
           tile('Paid, last 30 days', b ? money(b.paid_30d) : '—', 'Through Stripe')),
+        h('div', { class: 'panel sug', style: 'margin-top:18px' }, h('h2', null, 'Suggested to-dos', syncLine(sync)),
+          o.suggestions.length ? suggestionList(o.suggestions, true) : emptyLine(sync && sync.token && sync.ai ? 'Nothing new from email or meetings. New suggestions appear here after each daily check.' : 'Once inbox sync is set up, action items from client emails and Meet notes show up here for you to add or dismiss.')),
         h('div', { class: 'panel', style: 'margin-top:18px' }, h('h2', null, 'Pipeline'),
           h('div', { class: 'pipe' }, META.client_status.map(function (s) { return h('a', { href: '#/clients?status=' + s }, h('b', { text: String(o.pipeline[s] || 0) }), h('span', { text: lab(s) })); }))),
         h('div', { class: 'grid g3', style: 'margin-top:18px' },
@@ -334,6 +379,7 @@
     var paid = d.invoices.filter(function (i) { return i.status === 'paid'; });
     var tasksOpen = d.tasks.filter(function (t) { return !t.done; }).length;
     return h('div', null,
+      d.suggestions && d.suggestions.length ? h('div', { class: 'panel sug', style: 'margin-bottom:18px' }, h('h2', null, 'Suggested to-dos', h('small', null, String(d.suggestions.length))), suggestionList(d.suggestions, false)) : null,
       h('div', { class: 'grid g4' },
         tile('Monthly value', c.monthly_value ? usd(c.monthly_value) : '—', c.status === 'active' ? 'Active retainer' : lab(c.status)),
         tile('Open balance', money(open.reduce(function (s, i) { return s + i.amount_remaining; }, 0)), open.length + ' open invoice' + (open.length === 1 ? '' : 's')),
@@ -347,6 +393,7 @@
             h('dt', { text: 'Phone' }), h('dd', { text: c.phone || '—' }),
             h('dt', { text: 'Website' }), h('dd', null, c.website ? h('a', { href: /^https?:/.test(c.website) ? c.website : 'https://' + c.website, target: '_blank', rel: 'noopener', text: c.website }) : '—'),
             h('dt', { text: 'Source' }), h('dd', { text: c.source || '—' }),
+            h('dt', { text: 'Also matches' }), h('dd', { text: c.aliases || '—' }),
             h('dt', { text: 'Services' }), h('dd', null, (c.services || []).length ? h('div', { class: 'tags' }, c.services.map(function (s) { return h('span', { class: 'tag', text: s }); })) : '—'),
             h('dt', { text: 'Client since' }), h('dd', { text: day(c.created_at) }))),
         h('div', { class: 'panel' }, h('h2', null, 'Next step'),

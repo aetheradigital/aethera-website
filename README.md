@@ -19,10 +19,19 @@ Aethera Digital's website plus a native, embedded Stripe checkout.
   - `POST /api/stripe/webhook` - signed Stripe events; each one is logged and sent to the Apps Script (Payments tab + email)
 - `test/server.test.js` - runs the server against a fake Stripe API (`npm test`)
 - `forms/apps-script.gs` - Google Apps Script: contact form, payments sheet/alerts, branded invoice emails
+- `forms/desk-collector.gs` - Google Apps Script each team member installs: sends recent client emails and Gemini meeting notes to the Desk
+- `lib/collector.js` - matches those to Desk clients and asks Claude for action items (suggested to-dos)
 
 ## Domains
 
 Add `aetheradigital.com`, `www.aetheradigital.com` and `admin.aetheradigital.com` as custom domains on the aethera-site service in Render, then create the DNS records Render lists. The admin session cookie is scoped to the admin host only.
+
+## Suggested to-dos from email and meetings
+
+1. Each person installs `forms/desk-collector.gs` in their own Google account (steps at the top of the file) with the `DESK_TOKEN` script property.
+2. Every morning it sends the last 3 days of email threads involving a Desk client's address or domain, plus "Notes by Gemini" meeting docs, to `/api/collector/items`.
+3. The Desk matches each item to clients (email domains, extra addresses, business names and the client's "Also match" field), sends only matched items to Claude, and saves the action items as suggestions.
+4. Suggestions appear on the overview and on each client page with Add (to "General to-dos" or a chosen project) and Dismiss. Nothing becomes a task without a click. Items already seen are skipped.
 
 ## How invoicing works
 
@@ -40,6 +49,8 @@ Add `aetheradigital.com`, `www.aetheradigital.com` and `admin.aetheradigital.com
 | `STRIPE_PUBLISHABLE_KEY` | `pk_test_...` / `pk_live_...` |
 | `SITE_URL` | Public origin used in emailed invoice links, e.g. `https://aetheradigital.com`. Leave unset until the domain points at this service; links then use the address the admin page is open on. |
 | `DATABASE_URL` | Render Postgres **Internal Database URL** for the Desk (`aethera-desk`). Without it the Desk keeps data in memory only. |
+| `DESK_COLLECTOR_TOKEN` | Shared secret for the Apps Script collector (same value as each script's `DESK_TOKEN`). |
+| `ANTHROPIC_API_KEY` | Claude API key (console.anthropic.com) used to extract action items. `ANTHROPIC_MODEL` optionally overrides the default `claude-haiku-5-5`. |
 | `ADMIN_PASSWORD` | Password for the admin site. Admin is off until this is set. Use a long passphrase. |
 | `ADMIN_HOST` | Optional, default `admin.aetheradigital.com`. On that host `/` is the admin dashboard; on `aetheradigital.com` and `www.` the `/admin` path redirects there and the admin API is disabled. The onrender.com address keeps `/admin` as a fallback. |
 | `PRICE_PARTNERSHIP`, `PORTAL_URL` | Optional overrides; defaults are the sandbox IDs. Set live IDs when going live. |
