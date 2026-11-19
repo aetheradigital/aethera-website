@@ -10,6 +10,10 @@
  *   2. Project Settings (gear) > Script properties > Add: DESK_TOKEN = <token from Nicholas>.
  *   3. Back in the editor choose the "setup" function and click Run. Approve the Google permissions.
  *      setup() runs a first check right away and schedules a daily check at about 6 AM Eastern.
+ *
+ * hello@ (prospects and website form submissions): also add the script property DESK_MODE = leads.
+ * In lead mode it checks every 2 hours and also sends new inbound emails from people who aren't clients yet,
+ * so the Desk can spot new-business inquiries and suggest them as leads.
  */
 var DESK_URL = 'https://aetheradigital.com';
 var LOOKBACK_DAYS = 3;          // re-reads the last few days each run; the Desk ignores anything it has already seen
@@ -20,8 +24,13 @@ function setup() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'collect') ScriptApp.deleteTrigger(t);
   });
-  ScriptApp.newTrigger('collect').timeBased().everyDays(1).atHour(6).inTimezone('America/New_York').create();
+  if (leadMode_()) ScriptApp.newTrigger('collect').timeBased().everyHours(2).create();
+  else ScriptApp.newTrigger('collect').timeBased().everyDays(1).atHour(6).inTimezone('America/New_York').create();
   collect();
+}
+
+function leadMode_() {
+  return String(PropertiesService.getScriptProperties().getProperty('DESK_MODE') || '').trim().toLowerCase() === 'leads';
 }
 
 function collect() {
@@ -33,6 +42,10 @@ function collect() {
   var clients = info.clients || [];
 
   var items = emails_(clients, me).concat(meetings_());
+  if (leadMode_()) {
+    var have = {}; items.forEach(function (x) { have[x.url] = true; });   // same thread already sent as a client email
+    inbound_(me).forEach(function (x) { if (!have[x.url]) items.push(x); });
+  }
   var queued = 0;
   for (var i = 0; i < items.length; i += BATCH) {
     var r = call_('post', '/api/collector/items', { by: me, items: items.slice(i, i + BATCH) }, token);
@@ -75,6 +88,33 @@ function emails_(clients, me) {
       });
     });
   }
+  return out;
+}
+
+// Lead mode: new inbound mail from outside the team (plus website form notifications, which come from our own address).
+function inbound_(me) {
+  var out = []; var seen = {};
+  var queries = [
+    'in:inbox newer_than:' + LOOKBACK_DAYS + 'd -from:aetheradigital.com -from:oakgrovebusiness.com -category:promotions -category:social -category:updates -category:forums -from:noreply -from:no-reply -from:donotreply -from:mailer-daemon',
+    'newer_than:' + LOOKBACK_DAYS + 'd subject:"New website inquiry"'
+  ];
+  queries.forEach(function (q) {
+    GmailApp.search(q, 0, 40).forEach(function (th) {
+      if (seen[th.getId()]) return; seen[th.getId()] = true;
+      var first = th.getMessages()[0];
+      var id = '';
+      try { id = first.getHeader('Message-ID'); } catch (e) { id = ''; }
+      out.push({
+        kind: 'email', lead: true,
+        key: 'mail:' + (id || first.getId()),
+        url: 'https://mail.google.com/mail/?authuser=' + encodeURIComponent(me) + '#all/' + th.getId(),
+        title: th.getFirstMessageSubject(),
+        date: first.getDate().toISOString().slice(0, 10),
+        from: first.getFrom(), to: first.getTo(), cc: first.getCc(), reply_to: first.getReplyTo(),
+        text: stripQuoted_(first.getPlainBody()).slice(0, 8000)
+      });
+    });
+  });
   return out;
 }
 

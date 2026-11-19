@@ -262,6 +262,30 @@
     });
     return ul;
   }
+  function leadList(items, onChange) {
+    var ul = h('ul', { class: 'list' });
+    items.forEach(function (l) {
+      var li = h('li', null,
+        h('span', { class: 'src lead', 'aria-hidden': 'true', text: '★' }),
+        h('span', { class: 'grow' },
+          h('span', { class: 't', text: (l.company ? l.company + ' · ' : '') + l.name }),
+          h('span', { class: 'm' }, [l.email, l.phone, l.source_title ? '“' + l.source_title + '”' : null, l.source_date ? day(l.source_date) : null].filter(Boolean).join(' · ') + ' ',
+            l.source_url ? h('a', { href: l.source_url, target: '_blank', rel: 'noopener', text: 'View email ↗' }) : null),
+          l.summary ? h('span', { class: 'm ev', style: 'font-style:normal;color:#D6D6DC', text: l.summary }) : null,
+          (l.services || []).length ? h('div', { class: 'tags', style: 'margin-top:6px' }, l.services.map(function (x) { return h('span', { class: 'tag', text: x }); })) : null),
+        h('div', { class: 'sugacts' },
+          h('button', { class: 'pill small', type: 'button', text: 'Add to pipeline', onclick: function (e) {
+            e.target.disabled = true;
+            desk('POST', '/leads/' + l.id + '/accept', {}).then(function (r) { toast('Added ' + (r.client.company || r.client.name) + ' as a lead'); location.hash = '#/clients/' + r.client.id; })
+              .catch(function (x) { e.target.disabled = false; toast(x.message, true); });
+          } }),
+          h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Dismiss lead', title: 'Not a lead', text: '×', onclick: function () {
+            desk('PATCH', '/leads/' + l.id, { status: 'dismissed' }).then(function () { li.remove(); toast('Dismissed'); if (onChange) onChange(); }).catch(function (x) { toast(x.message, true); });
+          } })));
+      ul.appendChild(li);
+    });
+    return ul;
+  }
   function syncLine(st) {
     if (!st) return null;
     if (!st.token || !st.ai) return h('small', { text: 'Inbox sync not set up' });
@@ -287,6 +311,7 @@
           tile('Monthly recurring', usd(o.monthly_recurring), 'From active clients'),
           tile('Open invoices', b ? money(b.open_total) : '—', b ? b.open_count + ' open' + (b.overdue_count ? ' · ' + b.overdue_count + ' overdue' : '') : 'Stripe not connected', b && b.overdue_count),
           tile('Paid, last 30 days', b ? money(b.paid_30d) : '—', 'Through Stripe')),
+        o.leads && o.leads.length ? h('div', { class: 'panel sug', style: 'margin-top:18px' }, h('h2', null, 'New leads', h('small', null, o.leads.length + ' from hello@')), leadList(o.leads)) : null,
         h('div', { class: 'panel sug', style: 'margin-top:18px' }, h('h2', null, 'Suggested to-dos', syncLine(sync)),
           o.suggestions.length ? suggestionList(o.suggestions, true) : emptyLine(sync && sync.token && sync.ai ? 'Nothing new from email or meetings. New suggestions appear here after each daily check.' : 'Once inbox sync is set up, action items from client emails and Meet notes show up here for you to add or dismiss.')),
         h('div', { class: 'panel', style: 'margin-top:18px' }, h('h2', null, 'Pipeline'),
@@ -319,7 +344,8 @@
   // ---------- clients ----------
   function clientsView(status) {
     loading();
-    desk('GET', '/clients').then(function (r) {
+    Promise.all([desk('GET', '/clients'), desk('GET', '/leads').catch(function () { return { items: [] }; })]).then(function (both) {
+      var r = both[0]; var leadsRes = both[1];
       var all = r.items; var filter = status; var term = '';
       var tbody = h('tbody');
       function draw() {
@@ -344,7 +370,9 @@
           filter = s[0]; e.target.parentNode.querySelectorAll('.chip').forEach(function (x) { x.setAttribute('aria-pressed', String(x === e.target)); }); draw();
         } });
       });
+      var pendingLeads = (leadsRes.items || []).filter(function (l) { return l.status === 'new'; }).reverse();
       render(pageHead('Relationships', 'Clients & prospects', [btn('New client', function () { editClient(null, function (c) { location.hash = '#/clients/' + c.id; }); })]),
+        pendingLeads.length ? h('div', { class: 'panel sug', style: 'margin-bottom:18px' }, h('h2', null, 'New leads', h('small', null, String(pendingLeads.length))), leadList(pendingLeads)) : null,
         h('div', { class: 'toolbar' }, h('input', { class: 'search', type: 'search', placeholder: 'Search name, business or email', 'aria-label': 'Search clients', oninput: function (e) { term = e.target.value.trim().toLowerCase(); draw(); } }), chips),
         h('div', { class: 'card flush' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', { text: 'Client' }), h('th', { text: 'Status' }), h('th', { text: 'Services' }), h('th', { class: 'num', text: 'Value' }), h('th', { text: 'Next step' }))), tbody)));
       draw();

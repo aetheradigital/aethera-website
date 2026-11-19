@@ -600,6 +600,7 @@ async function deskOverview(req, res) {
     follow_ups: clients.filter(function (c) { return c.next_date && c.status !== 'past'; }).sort(function (a, b) { return a.next_date < b.next_date ? -1 : 1; }).slice(0, 8).map(function (c) {
       return { id: c.id, client: c.company || c.name, next_step: c.next_step || '', next_date: c.next_date, overdue: c.next_date < today, status: c.status };
     }),
+    leads: (await desk.allOf('lead')).filter(function (x) { return x.status === 'new'; }).sort(function (a, b) { return a.created_at < b.created_at ? 1 : -1; }),
     suggestions: (await desk.allOf('suggestion')).filter(function (x) { return x.status === 'new'; })
       .sort(function (a, b) { return a.created_at < b.created_at ? 1 : -1; }).slice(0, 12)
       .map(function (x) { return Object.assign({}, x, { client: name(x.client_id) }); }),
@@ -668,6 +669,8 @@ async function deskApi(req, res, url) {
   // suggested to-dos
   mm = p.match(/^\/suggestions\/(sug_[A-Za-z0-9_-]+)\/accept$/);
   if (mm && m === 'POST') return acceptSuggestion(req, res, mm[1]);
+  mm = p.match(/^\/leads\/(lea_[A-Za-z0-9_-]+)\/accept$/);
+  if (mm && m === 'POST') return acceptLead(req, res, mm[1]);
   if (p === '/collector' && m === 'GET') return collectorStatus(req, res);
 
   // files
@@ -695,7 +698,7 @@ async function deskApi(req, res, url) {
   if (mm && m === 'DELETE') { await desk.removeFile(mm[1]); return json(res, 200, { ok: true }); }
 
   // generic records: /clients, /projects, /tasks, /approvals, /reports (+ /:id)
-  mm = p.match(/^\/(clients|projects|tasks|approvals|reports|suggestions)(?:\/([a-z]{3}_[A-Za-z0-9_-]+))?$/);
+  mm = p.match(/^\/(clients|projects|tasks|approvals|reports|suggestions|leads)(?:\/([a-z]{3}_[A-Za-z0-9_-]+))?$/);
   if (!mm) return json(res, 404, { error: 'Not found' });
   const type = deskLib.PLURAL[mm[1]]; const id = mm[2];
   if (!id && m === 'GET') {
@@ -710,6 +713,7 @@ async function deskApi(req, res, url) {
     if (v.error) return json(res, 400, { error: v.error });
     const links = {};
     if (type === 'client') { v.data.status = v.data.status || 'lead'; }
+    else if (type === 'lead') { v.data.status = v.data.status || 'new'; }
     else if (deskLib.SCHEMA[type].parent === 'client') {
       if (!(await desk.get('client', v.data.client_id))) return json(res, 400, { error: 'Client not found.' });
       links.client_id = v.data.client_id;
@@ -781,8 +785,12 @@ async function ingestOne(job) {
   if (await desk.seen(item.key)) return 0;
   const clients = (await desk.allOf('client')).filter(function (c) { return c.status !== 'past'; });
   const candidates = collectorLib.matchClients(item, clients);
-  // Not tied to a Desk client (yet): don't mark it seen, so it's picked up if that client is added later. No AI call is made.
-  if (!candidates.length) return 0;
+  if (!candidates.length) {
+    // From the hello@ inbox: a sender we don't know may be a new prospect.
+    if (item.lead) return ingestLead(job);
+    // Not tied to a Desk client (yet): don't mark it seen, so it's picked up if that client is added later. No AI call is made.
+    return 0;
+  }
   const found = await collectorLib.extract(item, candidates, { model: ANTHROPIC_MODEL, apiKey: ANTHROPIC_KEY, apiBase: ANTHROPIC_BASE, today: new Date().toISOString().slice(0, 10) });
   let created = 0;
   for (const s of found) {
@@ -801,6 +809,42 @@ async function ingestOne(job) {
   await desk.markSeen(item.key);
   console.log('collector_ingested ' + JSON.stringify({ key: item.key, kind: item.kind, clients: candidates.length, suggestions: created }));
   return created;
+}
+
+async function ingestLead(job) {
+  const item = job.item;
+  const lead = await collectorLib.screenLead(item, deskLib.SERVICES, { model: ANTHROPIC_MODEL, apiKey: ANTHROPIC_KEY, apiBase: ANTHROPIC_BASE, today: new Date().toISOString().slice(0, 10) });
+  await desk.markSeen(item.key);
+  if (!lead) { console.log('collector_not_a_lead ' + JSON.stringify({ key: item.key })); return 0; }
+  if (lead.email) {
+    const known = (await desk.allOf('client')).some(function (c) { return (c.email || '').toLowerCase() === lead.email; }) ||
+      (await desk.allOf('lead')).some(function (l) { return (l.email || '').toLowerCase() === lead.email && l.status !== 'dismissed'; });
+    if (known) return 0;
+  }
+  const v = deskLib.validate('lead', Object.assign({}, lead, {
+    status: 'new', source: 'email', source_url: item.url, source_title: item.title, source_date: item.date, source_key: item.key, collected_by: job.by
+  }), false);
+  if (v.error) { console.warn('collector_lead_invalid', v.error); return 0; }
+  await desk.create('lead', v.data, {});
+  console.log('collector_new_lead ' + JSON.stringify({ key: item.key, name: v.data.name }));
+  return 1;
+}
+
+async function acceptLead(req, res, id) {
+  const l = await desk.get('lead', id);
+  if (!l) return json(res, 404, { error: 'Lead not found.' });
+  if (l.status !== 'new') return json(res, 409, { error: 'That lead was already handled.' });
+  const body = (await readJson(req, 4096)) || {};
+  const status = deskLib.CLIENT_STATUS.indexOf(body.status) >= 0 ? body.status : 'lead';
+  const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+  const notes = [l.summary, l.source_url ? 'Source: ' + (l.source_title || 'email') + ' (' + l.source_url + ')' : ''].filter(Boolean).join('\n\n');
+  const v = deskLib.validate('client', { name: l.name, company: l.company || '', email: l.email || '', phone: l.phone || '', website: l.website || '',
+    services: l.services || [], status: status, source: /website inquiry/i.test(l.source_title || '') ? 'Website form' : 'Email (hello@)',
+    next_step: l.next_step || 'Reply to book a discovery call', next_date: tomorrow, notes: notes }, false);
+  if (v.error) return json(res, 400, { error: v.error });
+  const client = await desk.create('client', v.data, {});
+  const updated = await desk.update('lead', l.id, { status: 'added', client_id: client.id });
+  return json(res, 200, { lead: updated, client: client });
 }
 
 async function collectorApi(req, res, url) {
@@ -822,7 +866,8 @@ async function collectorApi(req, res, url) {
         kind: raw.kind === 'meeting' ? 'meeting' : 'email',
         key: clip(raw.key, 300), url: /^https:\/\//.test(String(raw.url || '')) ? clip(raw.url, 500) : '',
         title: clip(raw.title, 300), date: clip(raw.date, 40), from: clip(raw.from, 1000), to: clip(raw.to, 2000), cc: clip(raw.cc, 2000),
-        attendees: clip(raw.attendees, 2000), text: String(raw.text || '').slice(0, 20000)
+        attendees: clip(raw.attendees, 2000), reply_to: clip(raw.reply_to, 300), lead: raw.lead === true,
+        text: String(raw.text || '').slice(0, 20000)
       };
       if (!item.key || !item.text) { skipped++; continue; }
       if (await desk.seen(item.key) || ingestQueue.some(function (j) { return j.item.key === item.key; })) { skipped++; continue; }

@@ -198,6 +198,7 @@ select.st option{background:#121217;color:#fff;text-transform:none}
 /* suggested to-dos */
 .sug .list li{align-items:flex-start}
 .sug .src{flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:13px;background:#15131D;color:var(--lav);margin-top:2px}
+.sug .src.lead{color:#F6E7A1;background:rgba(246,231,161,.1)}
 .sug .src.meeting{color:var(--peach);background:rgba(255,196,168,.1)}
 .sug .t{white-space:normal}
 .sug .m a{font-weight:600}
