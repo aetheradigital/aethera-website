@@ -377,7 +377,8 @@ function request(port, method, p, body, headers) {
     assert.strictEqual(sug[0].title, 'Send revised homepage mockups to Pat'); assert.strictEqual(sug[0].due, '2026-11-21');
     assert.strictEqual(sug[0].status, 'new'); assert.strictEqual(sug[0].source, 'email'); assert.strictEqual(sug[0].collected_by, 'nicholas@aetheradigital.com');
     r = await request(port, 'POST', '/api/collector/items', { by: 'nicholas@aetheradigital.com', items }, T);
-    assert.strictEqual(JSON.parse(r.body).queued, 0);
+    assert.strictEqual(JSON.parse(r.body).queued, 1, 'only the unmatched newsletter is re-checked (no AI call)');
+    await new Promise((x) => setTimeout(x, 300)); assert.strictEqual(aiCalls.length, 2);
     d = await dj('GET', '/overview'); assert.ok(d.body.suggestions.some((x) => x.id === sug[0].id && x.client === 'Bacon Roofing'));
     d = await dj('GET', '/collector'); assert.strictEqual(d.body.token, true); assert.strictEqual(d.body.runs[0].by, 'nicholas@aetheradigital.com');
     ok('collector: emails and meeting notes become suggestions via Claude; unrelated mail skipped; repeats ignored');

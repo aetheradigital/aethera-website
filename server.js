@@ -781,7 +781,8 @@ async function ingestOne(job) {
   if (await desk.seen(item.key)) return 0;
   const clients = (await desk.allOf('client')).filter(function (c) { return c.status !== 'past'; });
   const candidates = collectorLib.matchClients(item, clients);
-  if (!candidates.length) { await desk.markSeen(item.key); return 0; }
+  // Not tied to a Desk client (yet): don't mark it seen, so it's picked up if that client is added later. No AI call is made.
+  if (!candidates.length) return 0;
   const found = await collectorLib.extract(item, candidates, { model: ANTHROPIC_MODEL, apiKey: ANTHROPIC_KEY, apiBase: ANTHROPIC_BASE, today: new Date().toISOString().slice(0, 10) });
   let created = 0;
   for (const s of found) {
