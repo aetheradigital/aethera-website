@@ -146,23 +146,57 @@ position:relative;background:var(--ink);color:var(--paper);font-family:"Avenir N
 .pillar p{margin:0;font-size:16px;line-height:1.5;color:#1D1D22}
 
 /* journey */
-.journey{background:#fff;color:#000;padding:clamp(80px,10vw,160px) 0 clamp(120px,12vw,200px)}
+.journey{background:#fff;color:#000;padding:clamp(96px,11vw,170px) 0 clamp(120px,13vw,200px)}
 .journey .eyebrow{color:#55555F}
-.journey h2{font-size:clamp(44px,5.6vw,88px);margin-top:24px;max-width:14ch}
-.j-intro{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:32px}
-.j-intro p{max-width:460px;margin:0;color:#45454F;font-size:19px}
-.path{position:relative;height:300px;margin-top:96px}
-.path svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
-.path .base{fill:none;stroke:#E4E4E8;stroke-width:2;vector-effect:non-scaling-stroke}
-.path .draw{fill:none;stroke:#000;stroke-width:2.5;vector-effect:non-scaling-stroke;stroke-dasharray:1;stroke-dashoffset:calc(1 - var(--pj))}
-.node{position:absolute;width:220px;margin-left:-110px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px}
-.node .dot{width:56px;height:56px;margin-top:-28px;border-radius:50%;border:2px solid #000;background:#fff;display:flex;align-items:center;justify-content:center;font-family:"Raleway",sans-serif;font-weight:700;font-size:15px;transition:background .4s;--on:clamp(0,calc((var(--pj) - var(--k))*8),1);transform:scale(calc(.7 + var(--on)*.3));background:color-mix(in srgb,var(--c) calc(var(--on)*100%),#fff)}
-.node h3{font-size:22px;font-weight:600;opacity:calc(.35 + clamp(0,calc((var(--pj) - var(--k))*8),1)*.65)}
-.node p{margin:0;font-size:15px;line-height:1.45;color:#45454F}
-.n-low{top:66.6%}.n-high{top:33.3%}
-.n-high{flex-direction:column-reverse;transform:translateY(-100%)}
-.n-high .dot{margin-top:0;margin-bottom:-28px}
-.n-low .dot{margin-top:-28px}
+.jx{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(40px,6vw,110px);align-items:start}
+.jx-side{position:sticky;top:120px}
+.jx-side h2{font-size:clamp(44px,5.2vw,84px);margin-top:22px;max-width:11ch}
+.jx-side h2 em{font-style:italic;color:#6E54E8}
+.jx-lede{margin:24px 0 0;max-width:40ch;color:#45454F;font-size:19px}
+.jx-counter{position:relative;height:clamp(110px,11vw,170px);margin-top:44px;display:flex;align-items:flex-end;gap:14px}
+.jx-nums{position:relative;width:1.3em;height:1em;font-family:"Raleway",sans-serif;font-weight:200;font-size:clamp(110px,11vw,170px);line-height:1;letter-spacing:-.05em}
+.jx-num{position:absolute;left:0;bottom:0;--a:clamp(0,calc((var(--pj)*5 - var(--i))*6),1);--b:clamp(0,calc((var(--i) + 1 - var(--pj)*5)*6),1);opacity:min(max(var(--f,0),var(--a)),max(var(--l,0),var(--b)));transform:translateY(calc((1 - min(max(var(--f,0),var(--a)),1))*40px))}
+.jx-of{font-family:"Raleway",sans-serif;font-size:20px;color:#8A8A94;padding-bottom:18px}
+.jx-rail{list-style:none;margin:36px 0 0;padding:0;display:flex;flex-direction:column;gap:0;position:relative;max-width:360px}
+.jx-rail::before{content:"";position:absolute;left:7px;top:10px;bottom:10px;width:2px;background:#E7E5E0}
+.jx-rail::after{content:"";position:absolute;left:7px;top:10px;bottom:10px;width:2px;background:#000;transform-origin:top;transform:scaleY(var(--jt,1))}
+.jx-rail li{position:relative;display:flex;align-items:center;gap:16px;padding:7px 0;font-size:15px;font-weight:600;--on:clamp(0,calc((var(--pj)*5 - var(--i))*8 + .001),1);color:color-mix(in srgb,#000 calc(35% + var(--on)*65%),#fff)}
+.jx-rail li i{position:relative;z-index:1;width:16px;height:16px;border-radius:50%;border:2px solid #000;background:color-mix(in srgb,var(--c) calc(var(--on)*100%),#fff);transform:scale(calc(.75 + var(--on)*.25));transition:transform .3s}
+.jx-steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:clamp(28px,4vw,48px)}
+.jx-step{display:grid;grid-template-columns:minmax(0,1fr);gap:28px;padding:clamp(24px,3vw,40px);border-radius:32px;background:#F7F6F3;border:1px solid #ECEAE5;transition:transform .5s cubic-bezier(.2,.8,.2,1),box-shadow .5s,border-color .5s}
+.jx-step:hover{transform:translateY(-4px);border-color:var(--c);box-shadow:0 30px 80px -40px color-mix(in srgb,var(--c) 70%,transparent)}
+.jx-tag{display:inline-flex;align-items:center;gap:10px;margin:0;font-size:13px;letter-spacing:.22em;text-transform:uppercase;font-weight:700;color:#000}
+.jx-tag b{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--c)}
+.jx-step h3{font-size:clamp(30px,3vw,44px);font-weight:400;line-height:1.05;margin:14px 0 12px}
+.jx-step p.jx-txt{margin:0;color:#45454F;font-size:18px;max-width:46ch}
+.jx-ui{position:relative;border-radius:22px;background:#fff;border:1px solid #E6E4DF;padding:22px;min-height:230px;overflow:hidden;font-size:15px;color:#1D1D22}
+.jx-ui .glow{position:absolute;width:260px;height:260px;border-radius:50%;background:var(--c);filter:blur(70px);opacity:.45;right:-80px;top:-90px;pointer-events:none}
+.jx-ui > *:not(.glow){position:relative}
+/* mini UI parts */
+.ui-search{display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:999px;border:1px solid #E1DFDA;background:#fff;color:#55555F}
+.ui-result{margin-top:16px;padding:16px;border-radius:16px;background:#FAF9F6;border:1px solid #EEECE7}
+.ui-result .u{font-size:13px;color:#4A6B3A}.ui-result .t{font-family:"Raleway",sans-serif;font-size:20px;color:#2A1F8F;margin:2px 0 4px}
+.ui-chip{display:inline-flex;align-items:center;gap:8px;margin-top:14px;padding:8px 14px;border-radius:999px;background:#000;color:#fff;font-size:13px;font-weight:600}
+.ui-chip b{width:8px;height:8px;border-radius:50%;background:var(--c)}
+.ui-browser{border-radius:16px;border:1px solid #E1DFDA;overflow:hidden;background:#000;color:#fff}
+.ui-bar{display:flex;gap:6px;padding:10px 12px;background:#141417}.ui-bar span{width:9px;height:9px;border-radius:50%;background:#3A3A40}
+.ui-hero{padding:22px 20px 24px}.ui-hero .h{font-family:"Raleway",sans-serif;font-weight:300;font-size:26px;line-height:1.1}.ui-hero .h em{color:var(--c)}
+.ui-hero .l{height:8px;border-radius:8px;background:#2A2A30;margin-top:10px}.ui-hero .btn{display:inline-block;margin-top:16px;padding:9px 16px;border-radius:999px;background:#fff;color:#000;font-size:13px;font-weight:700}
+.ui-form{display:grid;gap:12px}.ui-field{border-bottom:1px solid #DAD8D3;padding:6px 0 8px}.ui-field small{display:block;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#77777F;font-weight:700}
+.ui-field span{font-family:"Raleway",sans-serif;font-size:18px}
+.ui-send{justify-self:start;margin-top:4px;padding:10px 18px;border-radius:999px;background:var(--c);color:#000;font-weight:700;font-size:14px}
+.ui-flow{display:grid;gap:10px}
+.ui-msg{max-width:88%;padding:12px 14px;border-radius:16px 16px 16px 4px;background:#F2F1EE;font-size:14px}
+.ui-msg.me{justify-self:end;border-radius:16px 16px 4px 16px;background:#000;color:#fff}
+.ui-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.ui-meta span{padding:6px 12px;border-radius:999px;border:1px solid #E1DFDA;font-size:12px;font-weight:700;background:#fff}
+.ui-meta span b{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--c);margin-right:6px}
+.ui-dash{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.ui-kpi{padding:14px;border-radius:14px;background:#FAF9F6;border:1px solid #EEECE7}
+.ui-kpi small{display:block;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#77777F;font-weight:700}
+.ui-kpi span{font-family:"Raleway",sans-serif;font-size:22px}
+.ui-bars{grid-column:1 / -1;display:flex;align-items:flex-end;gap:8px;height:90px;padding:14px;border-radius:14px;background:#FAF9F6;border:1px solid #EEECE7}
+.ui-bars i{flex:1;border-radius:6px 6px 2px 2px;background:#1D1D22}.ui-bars i:last-child{background:var(--c)}
 
 /* engage */
 .engage{position:relative;background:#000;border-radius:48px 48px 0 0;margin-top:-48px;padding:clamp(100px,12vw,180px) 0}
@@ -276,10 +310,10 @@ background:linear-gradient(90deg,var(--lav),var(--pink),var(--peach)) no-repeat 
 .pillars{grid-template-columns:minmax(0,1fr);gap:12px}
 .pillar{padding:20px}
 .pillar p{display:none}
-.path{height:auto;display:flex;flex-direction:column;gap:40px;margin-top:56px}
-.path svg{display:none}
-.node,.n-low,.n-high{position:static;width:auto;margin:0;flex-direction:row;align-items:flex-start;text-align:left}
-.node .dot,.n-high .dot{margin:0;flex:none}
+.jx{grid-template-columns:minmax(0,1fr)}
+.jx-side{position:static}
+.jx-counter,.jx-rail{display:none}
+.ui-dash{grid-template-columns:repeat(2,minmax(0,1fr))}
 .form{grid-template-columns:minmax(0,1fr)}
 }
 @media (pointer:coarse){.cta-big .fill{clip-path:none}}
@@ -417,25 +451,65 @@ background:linear-gradient(90deg,var(--lav),var(--pink),var(--peach)) no-repeat 
 </section>
 
 <section class="journey" data-sec="journey" aria-labelledby="j-h">
-<div class="wrap">
-<div class="j-intro">
-<div>
+<div class="wrap jx">
+<div class="jx-side">
 <p class="eyebrow" style="margin: 0">The customer journey</p>
 <h2 id="j-h">From first look to <em>loyal customer.</em></h2>
+<p class="jx-lede">We map every step your customer takes, and keep the tagging, routing, automation and reporting behind it clean and manageable.</p>
+<div class="jx-counter" aria-hidden="true">
+<div class="jx-nums"><span class="jx-num" style="--i: 0; --f: 1">01</span><span class="jx-num" style="--i: 1">02</span><span class="jx-num" style="--i: 2">03</span><span class="jx-num" style="--i: 3">04</span><span class="jx-num" style="--i: 4; --l: 1">05</span></div>
+<span class="jx-of">/ 05</span>
 </div>
-<p>We map every step and keep the tagging, routing, automation and reporting behind it clean and manageable.</p>
+<ol class="jx-rail" aria-hidden="true">
+<li style="--i: 0; --c: #C8B6FF"><i></i>Discover</li>
+<li style="--i: 1; --c: #FFC4A8"><i></i>Understand the offer</li>
+<li style="--i: 2; --c: #AFCBFF"><i></i>Inquire</li>
+<li style="--i: 3; --c: #FFB3D1"><i></i>Follow-up</li>
+<li style="--i: 4; --c: #CFE8B4"><i></i>Customer</li>
+</ol>
 </div>
-<div class="path">
-<svg viewBox="0 0 1200 300" preserveAspectRatio="none" aria-hidden="true">
-<path class="base" d="M120 200 C240 200 240 100 360 100 S480 200 600 200 S720 100 840 100 S960 200 1080 200"></path>
-<path class="draw" pathLength="1" d="M120 200 C240 200 240 100 360 100 S480 200 600 200 S720 100 840 100 S960 200 1080 200"></path>
-</svg>
-<div class="node n-low" style="left: 10%; --k: .02; --c: #C8B6FF"><span class="dot">01</span><div><h3>Discover</h3><p>They find you in search, social or an ad.</p></div></div>
-<div class="node n-high" style="left: 30%; --k: .22; --c: #FFC4A8"><span class="dot">02</span><div><h3>Understand the offer</h3><p>Your site makes it clear in seconds.</p></div></div>
-<div class="node n-low" style="left: 50%; --k: .45; --c: #AFCBFF"><span class="dot">03</span><div><h3>Inquire</h3><p>A simple path to reach out.</p></div></div>
-<div class="node n-high" style="left: 70%; --k: .68; --c: #FFB3D1"><span class="dot">04</span><div><h3>Follow-up</h3><p>Automations make sure nobody slips.</p></div></div>
-<div class="node n-low" style="left: 90%; --k: .9; --c: #CFE8B4"><span class="dot">05</span><div><h3>Customer</h3><p>And reporting shows what worked.</p></div></div>
+
+<ol class="jx-steps">
+<li class="jx-step" style="--c: #C8B6FF" data-rv="1">
+<div><p class="jx-tag"><b></b>01 · Discover</p><h3>They find you.</h3><p class="jx-txt">Search, AI answers, social and ads put your brand in front of the right people at the moment they’re looking.</p></div>
+<div class="jx-ui" aria-hidden="true"><span class="glow"></span>
+<div class="ui-search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="5"></circle><path d="M11 11l3.5 3.5"></path></svg>best digital agency for small business</div>
+<div class="ui-result"><div class="u">yourbrand.com</div><div class="t">Your Brand · Built to be found</div><div style="color: #55555F; font-size: 14px">Clear services, real answers and a fast path to get in touch.</div></div>
+<span class="ui-chip"><b></b>Cited in AI answers</span>
 </div>
+</li>
+
+<li class="jx-step" style="--c: #FFC4A8" data-rv="1">
+<div><p class="jx-tag"><b></b>02 · Understand the offer</p><h3>They get it in seconds.</h3><p class="jx-txt">A clear site and sharp positioning answer what you do, who it’s for and why you, before they think about leaving.</p></div>
+<div class="jx-ui" aria-hidden="true"><span class="glow"></span>
+<div class="ui-browser"><div class="ui-bar"><span></span><span></span><span></span></div>
+<div class="ui-hero"><div class="h">Roofing that lasts.<br><em>Quotes in 24 hours.</em></div><div class="l" style="width: 80%"></div><div class="l" style="width: 55%"></div><span class="btn">Get my quote</span></div></div>
+</div>
+</li>
+
+<li class="jx-step" style="--c: #AFCBFF" data-rv="1">
+<div><p class="jx-tag"><b></b>03 · Inquire</p><h3>They raise their hand.</h3><p class="jx-txt">One simple path to reach out (a form, a call or a booking) with nothing lost along the way.</p></div>
+<div class="jx-ui" aria-hidden="true"><span class="glow"></span>
+<div class="ui-form"><div class="ui-field"><small>Name</small><span>Jordan Rivera</span></div><div class="ui-field"><small>Need</small><span>New website + local SEO</span></div><span class="ui-send">Send inquiry →</span></div>
+</div>
+</li>
+
+<li class="jx-step" style="--c: #FFB3D1" data-rv="1">
+<div><p class="jx-tag"><b></b>04 · Follow-up</p><h3>Nobody slips through.</h3><p class="jx-txt">Tagging, routing and automations respond in minutes and hand every lead to the right person on your team.</p></div>
+<div class="jx-ui" aria-hidden="true"><span class="glow"></span>
+<div class="ui-flow"><div class="ui-msg">Hi Jordan, thanks for reaching out! Here’s a link to pick a time for your free strategy call.</div><div class="ui-msg me">Booked for Tuesday at 10.</div>
+<div class="ui-meta"><span><b></b>Tagged: Website lead</span><span><b></b>Routed to sales</span><span><b></b>Reply in 2 min</span></div></div>
+</div>
+</li>
+
+<li class="jx-step" style="--c: #CFE8B4" data-rv="1">
+<div><p class="jx-tag"><b></b>05 · Customer</p><h3>They stay, and you see why.</h3><p class="jx-txt">Client portals and reporting show what’s working, so every next decision is obvious.</p></div>
+<div class="jx-ui" aria-hidden="true"><span class="glow"></span>
+<div class="ui-dash"><div class="ui-kpi"><small>Leads</small><span>↑ this month</span></div><div class="ui-kpi"><small>Booked</small><span>On track</span></div><div class="ui-kpi"><small>Report</small><span>Ready</span></div>
+<div class="ui-bars"><i style="height: 35%"></i><i style="height: 48%"></i><i style="height: 44%"></i><i style="height: 62%"></i><i style="height: 70%"></i><i style="height: 92%"></i></div></div>
+</div>
+</li>
+</ol>
 </div>
 </section>
 
@@ -637,7 +711,7 @@ class Component extends DCLogic {
 
       if (!live) {
         set('--ph', '0'); set('--ps', '0'); set('--hx', '0px'); set('--pp', '1');
-        set('--pj', '1'); set('--pf', '1'); set('--pg', '0'); set('--skew', '0deg'); set('--nav', '0');
+        set('--pj', '1'); set('--jt', '1'); set('--pf', '1'); set('--pg', '0'); set('--skew', '0deg'); set('--nav', '0');
         return;
       }
       const rr = r.getBoundingClientRect();
@@ -659,7 +733,14 @@ class Component extends DCLogic {
         const sh = st ? st.clientHeight : vh;
         set('--pp', clamp(-b.top / Math.max(1, b.height - sh), 0, 1).toFixed(4));
       });
-      prog('journey', (b) => set('--pj', clamp((vh * 0.8 - b.top) / (b.height * 0.75), 0, 1).toFixed(4)));
+      const steps = qa('.jx-step');
+      if (steps.length > 1) {
+        const first = steps[0].getBoundingClientRect(), last = steps[steps.length - 1].getBoundingClientRect();
+        const mid = vh * 0.5, n = steps.length;
+        const t = clamp((mid - (first.top + first.height * 0.35)) / Math.max(1, (last.top + last.height * 0.35) - (first.top + first.height * 0.35)), 0, 1);
+        set('--jt', t.toFixed(4));
+        set('--pj', ((t * (n - 1) + 0.5) / n).toFixed(4));
+      }
       prog('footer', (b) => set('--pf', clamp((vh - b.top) / b.height, 0, 1).toFixed(4)));
 
       const v = sy - lastY; lastY = sy;
