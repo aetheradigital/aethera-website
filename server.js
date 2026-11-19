@@ -293,7 +293,18 @@ async function lookupInvoice(req, res) {
 
 async function findOrCreateCustomer(email, name, company, source) {
   const existing = await stripe('GET', '/v1/customers', { email: email, limit: 1 });
-  if (existing.data && existing.data[0]) return existing.data[0];
+  const found = existing.data && existing.data[0];
+  if (found) {
+    // Keep the customer record current: the name and business entered now win over old details.
+    const display = company || name;
+    if (display && (display !== found.name || (name && (found.metadata || {}).contact_name !== name))) {
+      return stripe('POST', '/v1/customers/' + found.id, {
+        name: display,
+        metadata: { contact_name: name || (found.metadata || {}).contact_name || '', company: company || (found.metadata || {}).company || '' }
+      });
+    }
+    return found;
+  }
   return stripe('POST', '/v1/customers', {
     email: email,
     name: company || name || undefined,

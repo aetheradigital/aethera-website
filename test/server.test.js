@@ -42,7 +42,8 @@ const fakeStripe = http.createServer((req, res) => {
     }
     if (m === 'GET' && p === '/v1/invoices') return send({ data: [INV()] });
     if (m === 'GET' && p.startsWith('/v1/invoices/in_')) return send(INV());
-    if (m === 'GET' && p === '/v1/customers') return send({ data: [] });
+    if (m === 'GET' && p === '/v1/customers') return send({ data: u.searchParams.get('email') === 'old@client.co' ? [{ id: 'cus_old', name: 'Test customer', metadata: {} }] : [] });
+    if (m === 'POST' && p === '/v1/customers/cus_old') return send({ id: 'cus_old', name: new URLSearchParams(body).get('name') });
     if (m === 'POST' && p === '/v1/customers') return send({ id: 'cus_new1' });
     if (m === 'POST' && p === '/v1/subscriptions') return send({ id: 'sub_1', latest_invoice: { confirmation_secret: { client_secret: 'pi_sub_secret_xyz' } } });
     if (m === 'POST' && p === '/v1/invoices') return send(Object.assign(INV(), { status: 'draft', number: null }));
@@ -213,6 +214,15 @@ function request(port, method, p, body, headers) {
     assert.strictEqual(notes[0].get('amount'), '$1,250.50'); assert.strictEqual(notes[0].get('token'), 'tok123');
     assert.strictEqual(calls[6].body.get('metadata[emailed_via]'), 'aethera');
     ok('admin create: customer, invoice, line items in cents, finalize, branded email with signed link');
+
+    calls.length = 0;
+    r = await request(port, 'POST', '/api/admin/invoices', { email: 'old@client.co', name: 'Pat Lee', company: 'Bacon Roofing', days_until_due: 14, send: false, items: [{ description: 'Thing', quantity: 1, unit_amount: '50' }] }, { Cookie: cookie });
+    assert.strictEqual(r.status, 200);
+    const upd = calls.find((x) => x.path === '/v1/customers/cus_old');
+    assert.ok(upd, 'existing customer is updated'); assert.strictEqual(upd.body.get('name'), 'Bacon Roofing'); assert.strictEqual(upd.body.get('metadata[contact_name]'), 'Pat Lee');
+    assert.strictEqual(calls.find((x) => x.path === '/v1/invoices' && x.method === 'POST').body.get('customer'), 'cus_old');
+    assert.strictEqual(calls.find((x) => x.path === '/v1/invoiceitems').body.get('unit_amount_decimal'), '5000');
+    ok('admin create: reusing an existing customer updates its name and business; "50" means $50.00');
 
     calls.length = 0;
     r = await request(port, 'POST', '/api/admin/invoices', { email: 'a@b.co', name: 'A', days_until_due: 14, send: false, items: [{ description: 'Thing', quantity: 1, unit_amount: '10' }] }, { Cookie: cookie });
