@@ -42,20 +42,20 @@
   function monthName(p) { var a = p.split('-'); return new Date(Number(a[0]), Number(a[1]) - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); }
   function monthShort(p) { var a = p.split('-'); return new Date(Number(a[0]), Number(a[1]) - 1, 1).toLocaleDateString('en-US', { month: 'short' }); }
   function today() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
-  function cap(s) { return String(s || '').replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); }); }
+  function cap(s) { return String(s || '').replace(/_/g, ' ').replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); }); }
   var LABEL = {
     lead: 'Lead', prospect: 'Prospect', proposal: 'Proposal', active: 'Active', paused: 'Paused', past: 'Past',
-    planned: 'Planned', in_progress: 'In progress', review: 'In review', done: 'Done', on_hold: 'On hold',
-    pending: 'Pending', approved: 'Approved', changes: 'Changes requested', declined: 'Declined',
-    approval: 'Approval', decision: 'Decision', access: 'Access request',
-    brand: 'Brand asset', access_f: 'Access', contract: 'Contract', deliverable: 'Deliverable', report: 'Report', other: 'Other'
+    planned: 'Planned', in_progress: 'In Progress', review: 'In Review', done: 'Done', on_hold: 'On Hold',
+    pending: 'Pending', approved: 'Approved', changes: 'Changes Requested', declined: 'Declined',
+    approval: 'Approval', decision: 'Decision', access: 'Access Request',
+    brand: 'Brand Asset', access_f: 'Access', contract: 'Contract', deliverable: 'Deliverable', report: 'Report', other: 'Other'
   };
   function lab(s) { return LABEL[s] || cap(s); }
   function badge(s, text) { return h('span', { class: 'st ' + s, text: text || lab(s) }); }
   var METRIC = {
-    seo_clicks: ['Search clicks', 'n'], seo_impressions: ['Search impressions', 'n'], seo_avg_position: ['Avg. search position', 'p'],
-    sessions: ['Website sessions', 'n'], leads: ['Leads', 'n'], ad_spend: ['Ad spend', '$'], ad_clicks: ['Ad clicks', 'n'],
-    ad_conversions: ['Ad conversions', 'n'], social_followers: ['Social followers', 'n'], social_engagement: ['Social engagements', 'n'], revenue: ['Attributed revenue', '$']
+    seo_clicks: ['Search Clicks', 'n'], seo_impressions: ['Search Impressions', 'n'], seo_avg_position: ['Avg. Search Position', 'p'],
+    sessions: ['Website Sessions', 'n'], leads: ['Leads', 'n'], ad_spend: ['Ad Spend', '$'], ad_clicks: ['Ad Clicks', 'n'],
+    ad_conversions: ['Ad Conversions', 'n'], social_followers: ['Social Followers', 'n'], social_engagement: ['Social Engagements', 'n'], revenue: ['Attributed Revenue', '$']
   };
   function mfmt(k, v) { var t = (METRIC[k] || [k, 'n'])[1]; return t === '$' ? usd(v) : t === 'p' ? num(v, 1) : num(v); }
 
@@ -73,7 +73,7 @@
   function desk(method, path, body) { return api(method, '/api/admin/desk' + path, body); }
   function copy(text) { (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(function () { toast('Link copied'); }, function () { window.prompt('Copy this link:', text); }); }
   function loading() { render(h('div', { class: 'dots', style: 'margin:60px auto;justify-content:center', 'aria-label': 'Loading' }, h('span'), h('span'), h('span'))); }
-  function failed(e) { render(h('div', { class: 'panel' }, h('h2', { text: 'Something went wrong' }), h('p', { class: 'empty', text: e.message }))); }
+  function failed(e) { render(h('div', { class: 'panel' }, h('h2', { text: 'Something Went Wrong' }), h('p', { class: 'empty', text: e.message }))); }
   function pageHead(eyebrow, title, acts, crumb) {
     return h('div', { class: 'ph' },
       h('div', null, crumb ? h('a', { class: 'crumb', href: crumb[0], text: '← ' + crumb[1] }) : null, h('p', { class: 'eyebrow', style: crumb ? 'margin-top:10px' : '', text: eyebrow }), h('h1', null, title)),
@@ -133,18 +133,18 @@
   // ---------- record forms ----------
   var clientFields = function () {
     return [
-      { name: 'name', label: 'Contact name', half: true, required: true }, { name: 'company', label: 'Business', half: true },
-      { name: 'email', label: 'Billing email', type: 'email', half: true }, { name: 'phone', label: 'Phone', type: 'tel', half: true },
+      { name: 'name', label: 'Contact Name', half: true, required: true }, { name: 'company', label: 'Business', half: true },
+      { name: 'email', label: 'Billing Email', type: 'email', half: true }, { name: 'phone', label: 'Phone', type: 'tel', half: true },
       { name: 'website', label: 'Website', half: true, placeholder: 'https://' }, { name: 'status', label: 'Status', type: 'select', options: META.client_status, half: true },
-      { name: 'monthly_value', label: 'Monthly value ($)', inputmode: 'decimal', half: true, placeholder: 'e.g. 2250' }, { name: 'source', label: 'Lead source', half: true, placeholder: 'Referral, website, event…' },
+      { name: 'monthly_value', label: 'Monthly Value ($)', inputmode: 'decimal', half: true, placeholder: 'e.g. 2250' }, { name: 'source', label: 'Lead Source', half: true, placeholder: 'Referral, website, event…' },
       { name: 'services', label: 'Services', type: 'checks', options: META.services },
-      { name: 'next_step', label: 'Next step', half: true, placeholder: 'e.g. Send proposal' }, { name: 'next_date', label: 'Next step date', type: 'date', half: true },
-      { name: 'aliases', label: 'Also match emails & meetings by', placeholder: 'Other emails, domains or short names, e.g. pat.lee@gmail.com, baconroofing.net, Bacon' },
+      { name: 'next_step', label: 'Next Step', half: true, placeholder: 'e.g. Send proposal' }, { name: 'next_date', label: 'Next Step Date', type: 'date', half: true },
+      { name: 'aliases', label: 'Also Match Emails & Meetings By', placeholder: 'Other emails, domains or short names, e.g. pat.lee@gmail.com, baconroofing.net, Bacon' },
       { name: 'notes', label: 'Notes', type: 'textarea', rows: 4, max: 10000 }
     ];
   };
   function editClient(c, then) {
-    modal({ title: c ? 'Edit client' : 'New client', fields: clientFields(), values: c || { status: 'lead' }, submit: c ? 'Save changes' : 'Create client',
+    modal({ title: c ? 'Edit Client' : 'New Client', fields: clientFields(), values: c || { status: 'lead' }, submit: c ? 'Save Changes' : 'Create Client',
       onSubmit: function (d) {
         if (!d.name) throw new Error('Enter a contact name.');
         return (c ? desk('PATCH', '/clients/' + c.id, d) : desk('POST', '/clients', d)).then(function (r) { toast(c ? 'Client saved' : 'Client created'); then(r.item); });
@@ -152,13 +152,13 @@
   }
   function editProject(p, clientId, then) {
     var fields = [
-      { name: 'name', label: 'Project name', required: true },
+      { name: 'name', label: 'Project Name', required: true },
       { name: 'status', label: 'Status', type: 'select', options: META.project_status, half: true }, { name: 'owner', label: 'Owner', half: true, placeholder: 'e.g. Joseph' },
       { name: 'start', label: 'Start', type: 'date', half: true }, { name: 'due', label: 'Due', type: 'date', half: true },
-      { name: 'description', label: 'Scope & notes', type: 'textarea', rows: 4 }
+      { name: 'description', label: 'Scope & Notes', type: 'textarea', rows: 4 }
     ];
-    if (!p) fields.splice(1, 0, { name: 'template', label: 'Start from a checklist', type: 'select', options: [['', 'None']].concat(Object.keys(META.templates).map(function (k) { return [k, META.templates[k].label + ' (' + META.templates[k].count + ' tasks)']; })) });
-    modal({ title: p ? 'Edit project' : 'New project', fields: fields, values: p || { status: 'planned' }, submit: p ? 'Save changes' : 'Create project',
+    if (!p) fields.splice(1, 0, { name: 'template', label: 'Start From a Checklist', type: 'select', options: [['', 'None']].concat(Object.keys(META.templates).map(function (k) { return [k, META.templates[k].label + ' (' + META.templates[k].count + ' tasks)']; })) });
+    modal({ title: p ? 'Edit Project' : 'New Project', fields: fields, values: p || { status: 'planned' }, submit: p ? 'Save Changes' : 'Create Project',
       onSubmit: function (d) {
         if (!d.name) throw new Error('Enter a project name.');
         var tpl = d.template; delete d.template;
@@ -170,11 +170,11 @@
       } });
   }
   function editApproval(a, clientId, then) {
-    modal({ title: a ? 'Update item' : 'New approval or decision', submit: a ? 'Save' : 'Add',
+    modal({ title: a ? 'Update Item' : 'New Approval or Decision', submit: a ? 'Save' : 'Add',
       fields: [
         { name: 'title', label: 'What needs a decision?', required: true, placeholder: 'e.g. Homepage design v2' },
         { name: 'kind', label: 'Type', type: 'select', options: META.approval_kind, half: true }, { name: 'status', label: 'Status', type: 'select', options: META.approval_status, half: true },
-        { name: 'decided_by', label: 'Decided by', half: true }, { name: 'decided', label: 'Decision date', type: 'date', half: true },
+        { name: 'decided_by', label: 'Decided By', half: true }, { name: 'decided', label: 'Decision Date', type: 'date', half: true },
         { name: 'notes', label: 'Notes', type: 'textarea', rows: 3 }
       ],
       values: a || { kind: 'approval', status: 'pending' },
@@ -234,16 +234,16 @@
     var ul = h('ul', { class: 'list' });
     items.forEach(function (s) {
       var li = h('li', null,
-        h('span', { class: 'src ' + (s.source || 'email'), title: s.source === 'meeting' ? 'From meeting notes' : 'From email', 'aria-hidden': 'true', text: s.source === 'meeting' ? '◉' : '✉' }),
+        h('span', { class: 'src ' + (s.source || 'email'), title: s.source === 'meeting' ? 'From Meeting Notes' : 'From Email', 'aria-hidden': 'true', text: s.source === 'meeting' ? '◉' : '✉' }),
         h('span', { class: 'grow' },
           h('span', { class: 't', text: s.title }),
           h('span', { class: 'm' }, [showClient ? s.client : null, s.source_title ? '“' + s.source_title + '”' : null, s.due ? 'Due ' + day(s.due) : null].filter(Boolean).join(' · ') + ' ',
-            s.source_url ? h('a', { href: s.source_url, target: '_blank', rel: 'noopener', text: 'View source ↗' }) : null),
+            s.source_url ? h('a', { href: s.source_url, target: '_blank', rel: 'noopener', text: 'View Source ↗' }) : null),
           s.evidence ? h('span', { class: 'm ev', text: s.evidence }) : null),
         h('div', { class: 'sugacts' },
-          h('button', { class: 'pill small', type: 'button', text: 'Add', title: 'Add to General to-dos', onclick: function (e) { accept(s, null, e.target); } }),
+          h('button', { class: 'pill small', type: 'button', text: 'Add', title: 'Add to General To-Dos', onclick: function (e) { accept(s, null, e.target); } }),
           h('button', { class: 'pill small ghost', type: 'button', text: 'Add to…', onclick: function () { acceptTo(s); } }),
-          h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Dismiss suggestion', title: 'Dismiss', text: '×', onclick: function () {
+          h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Dismiss Suggestion', title: 'Dismiss', text: '×', onclick: function () {
             desk('PATCH', '/suggestions/' + s.id, { status: 'dismissed' }).then(function () { li.remove(); toast('Dismissed'); if (onChange) onChange(); }).catch(function (x) { toast(x.message, true); });
           } })));
       ul.appendChild(li);
@@ -254,8 +254,8 @@
       }
       function acceptTo(sg) {
         desk('GET', '/projects?client_id=' + sg.client_id).then(function (r) {
-          var opts = [['', 'General to-dos']].concat(r.items.filter(function (p) { return p.status !== 'done' && p.name !== 'General to-dos'; }).map(function (p) { return [p.id, p.name]; }));
-          modal({ title: 'Add to-do', submit: 'Add task', values: { title: sg.title, project_id: '' }, fields: [{ name: 'title', label: 'Task' }, { name: 'project_id', label: 'Project', type: 'select', options: opts }],
+          var opts = [['', 'General To-Dos']].concat(r.items.filter(function (p) { return p.status !== 'done' && p.name.toLowerCase() !== 'general to-dos'; }).map(function (p) { return [p.id, p.name]; }));
+          modal({ title: 'Add To-Do', submit: 'Add Task', values: { title: sg.title, project_id: '' }, fields: [{ name: 'title', label: 'Task' }, { name: 'project_id', label: 'Project', type: 'select', options: opts }],
             onSubmit: function (v) { if (!v.title) throw new Error('Enter a task.'); return desk('POST', '/suggestions/' + sg.id + '/accept', { title: v.title, project_id: v.project_id || null }).then(function (x) { li.remove(); toast('Added to ' + x.project.name); if (onChange) onChange(); }); } });
         });
       }
@@ -270,16 +270,16 @@
         h('span', { class: 'grow' },
           h('span', { class: 't', text: (l.company ? l.company + ' · ' : '') + l.name }),
           h('span', { class: 'm' }, [l.email, l.phone, l.source_title ? '“' + l.source_title + '”' : null, l.source_date ? day(l.source_date) : null].filter(Boolean).join(' · ') + ' ',
-            l.source_url ? h('a', { href: l.source_url, target: '_blank', rel: 'noopener', text: 'View email ↗' }) : null),
+            l.source_url ? h('a', { href: l.source_url, target: '_blank', rel: 'noopener', text: 'View Email ↗' }) : null),
           l.summary ? h('span', { class: 'm ev', style: 'font-style:normal;color:#D6D6DC', text: l.summary }) : null,
           (l.services || []).length ? h('div', { class: 'tags', style: 'margin-top:6px' }, l.services.map(function (x) { return h('span', { class: 'tag', text: x }); })) : null),
         h('div', { class: 'sugacts' },
-          h('button', { class: 'pill small', type: 'button', text: 'Add to pipeline', onclick: function (e) {
+          h('button', { class: 'pill small', type: 'button', text: 'Add to Pipeline', onclick: function (e) {
             e.target.disabled = true;
             desk('POST', '/leads/' + l.id + '/accept', {}).then(function (r) { toast('Added ' + (r.client.company || r.client.name) + ' as a lead'); location.hash = '#/clients/' + r.client.id; })
               .catch(function (x) { e.target.disabled = false; toast(x.message, true); });
           } }),
-          h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Dismiss lead', title: 'Not a lead', text: '×', onclick: function () {
+          h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Dismiss Lead', title: 'Not a lead', text: '×', onclick: function () {
             desk('PATCH', '/leads/' + l.id, { status: 'dismissed' }).then(function () { li.remove(); toast('Dismissed'); if (onChange) onChange(); }).catch(function (x) { toast(x.message, true); });
           } })));
       ul.appendChild(li);
@@ -305,19 +305,19 @@
       setMode(b && b.test_mode);
       render(
         o.store === 'memory' ? h('p', { class: 'banner', text: 'The Desk database isn’t connected, so changes are kept only until the server restarts. Add DATABASE_URL in Render to save them.' }) : null,
-        pageHead('Aethera Desk', [hello + '.'], [btn('New client', function () { editClient(null, function (c) { location.hash = '#/clients/' + c.id; }); }), btn('New invoice', function () { location.hash = '#/invoices?new=1'; }, 'ghost')]),
+        pageHead('Aethera Desk', [hello + '.'], [btn('New Client', function () { editClient(null, function (c) { location.hash = '#/clients/' + c.id; }); }), btn('New Invoice', function () { location.hash = '#/invoices?new=1'; }, 'ghost')]),
         h('div', { class: 'grid g4' },
-          tile('Active clients', String(o.active_clients), o.pipeline.prospect + o.pipeline.proposal + ' in the pipeline'),
-          tile('Monthly recurring', usd(o.monthly_recurring), 'From active clients'),
-          tile('Open invoices', b ? money(b.open_total) : '—', b ? b.open_count + ' open' + (b.overdue_count ? ' · ' + b.overdue_count + ' overdue' : '') : 'Stripe not connected', b && b.overdue_count),
-          tile('Paid, last 30 days', b ? money(b.paid_30d) : '—', 'Through Stripe')),
-        o.leads && o.leads.length ? h('div', { class: 'panel sug', style: 'margin-top:18px' }, h('h2', null, 'New leads', h('small', null, o.leads.length + ' from hello@')), leadList(o.leads)) : null,
-        h('div', { class: 'panel sug', style: 'margin-top:18px' }, h('h2', null, 'Suggested to-dos', syncLine(sync)),
+          tile('Active Clients', String(o.active_clients), o.pipeline.prospect + o.pipeline.proposal + ' in the pipeline'),
+          tile('Monthly Recurring', usd(o.monthly_recurring), 'From active clients'),
+          tile('Open Invoices', b ? money(b.open_total) : '—', b ? b.open_count + ' open' + (b.overdue_count ? ' · ' + b.overdue_count + ' overdue' : '') : 'Stripe not connected', b && b.overdue_count),
+          tile('Paid, Last 30 Days', b ? money(b.paid_30d) : '—', 'Through Stripe')),
+        o.leads && o.leads.length ? h('div', { class: 'panel sug', style: 'margin-top:18px' }, h('h2', null, 'New Leads', h('small', null, o.leads.length + ' from hello@')), leadList(o.leads)) : null,
+        h('div', { class: 'panel sug', style: 'margin-top:18px' }, h('h2', null, 'Suggested To-Dos', syncLine(sync)),
           o.suggestions.length ? suggestionList(o.suggestions, true) : emptyLine(sync && sync.token && sync.ai ? 'Nothing new from email or meetings. New suggestions appear here after each daily check.' : 'Once inbox sync is set up, action items from client emails and Meet notes show up here for you to add or dismiss.')),
         h('div', { class: 'panel', style: 'margin-top:18px' }, h('h2', null, 'Pipeline'),
           h('div', { class: 'pipe' }, META.client_status.map(function (s) { return h('a', { href: '#/clients?status=' + s }, h('b', { text: String(o.pipeline[s] || 0) }), h('span', { text: lab(s) })); }))),
         h('div', { class: 'grid g3', style: 'margin-top:18px' },
-          h('div', { class: 'panel' }, h('h2', null, 'Due this week', h('small', null, String(o.tasks_due.length))),
+          h('div', { class: 'panel' }, h('h2', null, 'Due This Week', h('small', null, String(o.tasks_due.length))),
             o.tasks_due.length ? h('ul', { class: 'list' }, o.tasks_due.map(function (t) {
               var li = h('li', null,
                 h('input', { type: 'checkbox', class: 'chk', 'aria-label': 'Mark “' + t.title + '” done', onchange: function (e) {
@@ -327,7 +327,7 @@
                 h('span', { class: 'when' + (t.overdue ? ' bad' : ''), text: t.overdue ? 'Overdue' : day(t.due) }));
               return li;
             })) : emptyLine('Nothing due in the next 7 days.')),
-          h('div', { class: 'panel' }, h('h2', null, 'Waiting on approval', h('small', null, String(o.approvals_pending.length))),
+          h('div', { class: 'panel' }, h('h2', null, 'Waiting on Approval', h('small', null, String(o.approvals_pending.length))),
             o.approvals_pending.length ? h('ul', { class: 'list' }, o.approvals_pending.slice(0, 10).map(function (a) {
               return h('li', null, h('span', { class: 'grow' }, h('a', { class: 't', href: '#/clients/' + a.client_id + '/approvals', text: a.title }), h('span', { class: 'm', text: a.client + ' · ' + lab(a.kind) })), h('span', { class: 'when', text: day(a.requested) }));
             })) : emptyLine('No open approvals.')),
@@ -339,7 +339,7 @@
     }).catch(failed);
   }
   function tile(k, v, s, bad) { return h('div', { class: 'tile' }, h('div', { class: 'k', text: k }), h('div', { class: 'v', text: v }), h('div', { class: 's' + (bad ? ' bad' : ''), text: s })); }
-  function setMode(test) { var m = document.getElementById('mode'); if (test === undefined || test === null) return; m.hidden = false; m.textContent = test ? 'Stripe test mode' : 'Live payments'; m.className = 'mode' + (test ? '' : ' live'); }
+  function setMode(test) { var m = document.getElementById('mode'); if (test === undefined || test === null) return; m.hidden = false; m.textContent = test ? 'Stripe Test Mode' : 'Live Payments'; m.className = 'mode' + (test ? '' : ' live'); }
 
   // ---------- clients ----------
   function clientsView(status) {
@@ -371,10 +371,10 @@
         } });
       });
       var pendingLeads = (leadsRes.items || []).filter(function (l) { return l.status === 'new'; }).reverse();
-      render(pageHead('Relationships', 'Clients & prospects', [btn('New client', function () { editClient(null, function (c) { location.hash = '#/clients/' + c.id; }); })]),
-        pendingLeads.length ? h('div', { class: 'panel sug', style: 'margin-bottom:18px' }, h('h2', null, 'New leads', h('small', null, String(pendingLeads.length))), leadList(pendingLeads)) : null,
+      render(pageHead('Relationships', 'Clients & Prospects', [btn('New Client', function () { editClient(null, function (c) { location.hash = '#/clients/' + c.id; }); })]),
+        pendingLeads.length ? h('div', { class: 'panel sug', style: 'margin-bottom:18px' }, h('h2', null, 'New Leads', h('small', null, String(pendingLeads.length))), leadList(pendingLeads)) : null,
         h('div', { class: 'toolbar' }, h('input', { class: 'search', type: 'search', placeholder: 'Search name, business or email', 'aria-label': 'Search clients', oninput: function (e) { term = e.target.value.trim().toLowerCase(); draw(); } }), chips),
-        h('div', { class: 'card flush' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', { text: 'Client' }), h('th', { text: 'Status' }), h('th', { text: 'Services' }), h('th', { class: 'num', text: 'Value' }), h('th', { text: 'Next step' }))), tbody)));
+        h('div', { class: 'card flush' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', { text: 'Client' }), h('th', { text: 'Status' }), h('th', { text: 'Services' }), h('th', { class: 'num', text: 'Value' }), h('th', { text: 'Next Step' }))), tbody)));
       draw();
     }).catch(failed);
   }
@@ -399,7 +399,7 @@
       else if (tab === 'invoices') body = clientInvoices(c, d);
       else body = clientOverview(c, d, reload);
       render(pageHead(c.company ? c.name : 'Client', [c.company || c.name, ' ', statusSel],
-        [btn('New invoice', function () { location.hash = '#/invoices?new=1&client=' + c.id; }), btn('Edit', function () { editClient(c, reload); }, 'ghost')], ['#/clients', 'Clients']), tabs, body);
+        [btn('New Invoice', function () { location.hash = '#/invoices?new=1&client=' + c.id; }), btn('Edit', function () { editClient(c, reload); }, 'ghost')], ['#/clients', 'Clients']), tabs, body);
     }).catch(failed);
   }
   function clientOverview(c, d, reload) {
@@ -407,12 +407,12 @@
     var paid = d.invoices.filter(function (i) { return i.status === 'paid'; });
     var tasksOpen = d.tasks.filter(function (t) { return !t.done; }).length;
     return h('div', null,
-      d.suggestions && d.suggestions.length ? h('div', { class: 'panel sug', style: 'margin-bottom:18px' }, h('h2', null, 'Suggested to-dos', h('small', null, String(d.suggestions.length))), suggestionList(d.suggestions, false)) : null,
+      d.suggestions && d.suggestions.length ? h('div', { class: 'panel sug', style: 'margin-bottom:18px' }, h('h2', null, 'Suggested To-Dos', h('small', null, String(d.suggestions.length))), suggestionList(d.suggestions, false)) : null,
       h('div', { class: 'grid g4' },
-        tile('Monthly value', c.monthly_value ? usd(c.monthly_value) : '—', c.status === 'active' ? 'Active retainer' : lab(c.status)),
-        tile('Open balance', money(open.reduce(function (s, i) { return s + i.amount_remaining; }, 0)), open.length + ' open invoice' + (open.length === 1 ? '' : 's')),
-        tile('Paid to date', money(paid.reduce(function (s, i) { return s + i.total; }, 0)), paid.length + ' paid invoice' + (paid.length === 1 ? '' : 's')),
-        tile('Open tasks', String(tasksOpen), d.projects.filter(function (p) { return p.status !== 'done'; }).length + ' active project(s)')),
+        tile('Monthly Value', c.monthly_value ? usd(c.monthly_value) : '—', c.status === 'active' ? 'Active Retainer' : lab(c.status)),
+        tile('Open Balance', money(open.reduce(function (s, i) { return s + i.amount_remaining; }, 0)), open.length + ' open invoice' + (open.length === 1 ? '' : 's')),
+        tile('Paid to Date', money(paid.reduce(function (s, i) { return s + i.total; }, 0)), paid.length + ' paid invoice' + (paid.length === 1 ? '' : 's')),
+        tile('Open Tasks', String(tasksOpen), d.projects.filter(function (p) { return p.status !== 'done'; }).length + ' active project(s)')),
       h('div', { class: 'grid g2', style: 'margin-top:18px' },
         h('div', { class: 'panel' }, h('h2', null, 'Details'),
           h('dl', { class: 'dl' },
@@ -421,15 +421,15 @@
             h('dt', { text: 'Phone' }), h('dd', { text: c.phone || '—' }),
             h('dt', { text: 'Website' }), h('dd', null, c.website ? h('a', { href: /^https?:/.test(c.website) ? c.website : 'https://' + c.website, target: '_blank', rel: 'noopener', text: c.website }) : '—'),
             h('dt', { text: 'Source' }), h('dd', { text: c.source || '—' }),
-            h('dt', { text: 'Also matches' }), h('dd', { text: c.aliases || '—' }),
+            h('dt', { text: 'Also Matches' }), h('dd', { text: c.aliases || '—' }),
             h('dt', { text: 'Services' }), h('dd', null, (c.services || []).length ? h('div', { class: 'tags' }, c.services.map(function (s) { return h('span', { class: 'tag', text: s }); })) : '—'),
-            h('dt', { text: 'Client since' }), h('dd', { text: day(c.created_at) }))),
-        h('div', { class: 'panel' }, h('h2', null, 'Next step'),
+            h('dt', { text: 'Client Since' }), h('dd', { text: day(c.created_at) }))),
+        h('div', { class: 'panel' }, h('h2', null, 'Next Step'),
           c.next_step ? h('p', { style: 'margin:0 0 6px;font-size:18px', text: c.next_step }) : emptyLine('No next step set.'),
           c.next_date ? h('p', { class: (c.next_date < today() ? 'st overdue' : 'st open'), style: 'margin:0 0 18px', text: (c.next_date < today() ? 'Overdue · ' : '') + day(c.next_date) }) : null,
           h('h2', { style: 'margin-top:18px' }, 'Notes'),
           c.notes ? h('p', { class: 'notes', text: c.notes }) : emptyLine('No notes yet.'))),
-      h('div', { class: 'no-print', style: 'margin-top:24px' }, h('button', { class: 'pill small ghost', type: 'button', text: 'Delete client', onclick: function () {
+      h('div', { class: 'no-print', style: 'margin-top:24px' }, h('button', { class: 'pill small ghost', type: 'button', text: 'Delete Client', onclick: function () {
         if (!confirmDelete((c.company || c.name) + ' and all of its projects, files, approvals and reports (Stripe invoices are not affected)')) return;
         desk('DELETE', '/clients/' + c.id).then(function () { toast('Client deleted'); location.hash = '#/clients'; }).catch(function (x) { toast(x.message, true); });
       } })));
@@ -437,7 +437,7 @@
   function progress(tasks) { var t = tasks.length; var dn = tasks.filter(function (x) { return x.done; }).length; return { t: t, d: dn, pct: t ? Math.round(dn / t * 100) : 0 }; }
   function clientProjects(c, d, reload) {
     return h('div', null,
-      h('div', { class: 'toolbar' }, btn('New project', function () { editProject(null, c.id, function (p) { location.hash = '#/projects/' + p.id; }); })),
+      h('div', { class: 'toolbar' }, btn('New Project', function () { editProject(null, c.id, function (p) { location.hash = '#/projects/' + p.id; }); })),
       d.projects.length ? h('div', { class: 'grid g3' }, d.projects.map(function (p) {
         var pr = progress(d.tasks.filter(function (t) { return t.project_id === p.id; }));
         return h('a', { class: 'pc', href: '#/projects/' + p.id },
@@ -467,7 +467,7 @@
     }
     var size = function (b) { return b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB'; };
     return h('div', null,
-      h('div', { class: 'panel', style: 'margin-bottom:18px' }, h('div', { class: 'toolbar', style: 'margin-bottom:12px' }, h('span', { class: 'eyebrow', text: 'Upload as' }), cat), drop),
+      h('div', { class: 'panel', style: 'margin-bottom:18px' }, h('div', { class: 'toolbar', style: 'margin-bottom:12px' }, h('span', { class: 'eyebrow', text: 'Upload As' }), cat), drop),
       d.files.length ? h('div', { class: 'card flush' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', { text: 'File' }), h('th', { text: 'Category' }), h('th', { text: 'Size' }), h('th', { text: 'Added' }), h('th', { class: 'num' }))),
         h('tbody', null, d.files.map(function (f) {
           return h('tr', null, h('td', null, h('a', { href: '/api/admin/desk/files/' + f.id, text: f.name })), h('td', null, h('span', { class: 'tag', text: f.category === 'access' ? 'Access' : lab(f.category) })),
@@ -493,13 +493,13 @@
   function clientApprovals(c, d, reload) {
     var list = d.approvals.slice().sort(function (a, b) { return (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1) || (b.created_at < a.created_at ? -1 : 1); });
     return h('div', null,
-      h('div', { class: 'toolbar' }, btn('New approval or decision', function () { editApproval(null, c.id, reload); })),
+      h('div', { class: 'toolbar' }, btn('New Approval or Decision', function () { editApproval(null, c.id, reload); })),
       list.length ? h('div', { class: 'card flush' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', { text: 'Item' }), h('th', { text: 'Status' }), h('th', { text: 'Date' }), h('th', { class: 'num' }))),
         h('tbody', null, list.map(function (a) { return approvalRow(a, false, reload); })))) : h('div', { class: 'panel' }, emptyLine('Track design approvals, key decisions and access requests here.')));
   }
   function clientReports(c, d) {
     return h('div', null,
-      h('div', { class: 'toolbar' }, btn('New monthly report', function () { newReport(c.id); })),
+      h('div', { class: 'toolbar' }, btn('New Monthly Report', function () { newReport(c.id); })),
       d.reports.length ? h('div', { class: 'grid g3' }, d.reports.map(function (r) {
         var m = r.metrics || {}; var keys = Object.keys(m).slice(0, 3);
         return h('a', { class: 'pc', href: '#/reports/' + r.id }, h('b', { text: monthName(r.period) }), h('small', { text: keys.map(function (k) { return METRIC[k][0] + ' ' + mfmt(k, m[k]); }).join(' · ') || 'No metrics yet' }));
@@ -510,7 +510,7 @@
     var period = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
     var fields = [{ name: 'period', label: 'Month', type: 'month' }];
     if (!clientId) fields.unshift({ name: 'client_id', label: 'Client', type: 'select', options: clients.map(function (c) { return [c.id, c.company || c.name]; }) });
-    modal({ title: 'New monthly report', fields: fields, values: { period: period }, submit: 'Create report', onSubmit: function (v) {
+    modal({ title: 'New Monthly Report', fields: fields, values: { period: period }, submit: 'Create Report', onSubmit: function (v) {
       return desk('POST', '/reports', { client_id: clientId || v.client_id, period: v.period }).then(function (r) { location.hash = '#/reports/' + r.item.id + '?edit=1'; });
     } });
   }
@@ -521,7 +521,7 @@
   function clientInvoices(c, d) {
     if (!c.email) return h('div', { class: 'panel' }, emptyLine('Add a billing email to this client to see their Stripe invoices here.'));
     return h('div', null,
-      h('div', { class: 'toolbar' }, btn('New invoice', function () { location.hash = '#/invoices?new=1&client=' + c.id; })),
+      h('div', { class: 'toolbar' }, btn('New Invoice', function () { location.hash = '#/invoices?new=1&client=' + c.id; })),
       d.invoice_error ? h('p', { class: 'banner', text: d.invoice_error }) : null,
       invoiceTable(d.invoices, function () { clientView(c.id, 'invoices'); }));
   }
@@ -532,24 +532,89 @@
     Promise.all([desk('GET', '/projects'), desk('GET', '/tasks'), desk('GET', '/clients')]).then(function (r) {
       var clients = {}; r[2].items.forEach(function (c) { clients[c.id] = c; });
       var cols = ['planned', 'in_progress', 'review', 'on_hold', 'done'];
-      render(pageHead('Work', 'Projects', [btn('New project', function () {
+      var board = h('div', { class: 'board' });
+      render(pageHead('Work', 'Projects', [btn('New Project', function () {
         if (!r[2].items.length) { toast('Add a client first', true); return; }
-        modal({ title: 'New project', submit: 'Next', fields: [{ name: 'client_id', label: 'Client', type: 'select', options: r[2].items.map(function (c) { return [c.id, c.company || c.name]; }) }], onSubmit: function (v) {
+        modal({ title: 'New Project', submit: 'Next', fields: [{ name: 'client_id', label: 'Client', type: 'select', options: r[2].items.map(function (c) { return [c.id, c.company || c.name]; }) }], onSubmit: function (v) {
           setTimeout(function () { editProject(null, v.client_id, function (p) { location.hash = '#/projects/' + p.id; }); }, 0);
         } });
       })]),
-      h('div', { class: 'board' }, cols.map(function (s) {
-        var ps = r[0].items.filter(function (p) { return (p.status || 'planned') === s; }).sort(function (a, b) { return (a.due || '9') < (b.due || '9') ? -1 : 1; });
-        return h('section', { class: 'col', 'aria-label': lab(s) }, h('h3', null, lab(s), h('span', { text: String(ps.length) })),
-          ps.length ? ps.map(function (p) {
-            var pr = progress(r[1].items.filter(function (t) { return t.project_id === p.id; }));
-            var cl = clients[p.client_id] || {};
-            var overdue = p.due && p.due < today() && s !== 'done';
-            return h('a', { class: 'pc', href: '#/projects/' + p.id }, h('b', { text: p.name }), h('small', { text: cl.company || cl.name || '' }),
-              h('small', { style: overdue ? 'color:var(--err)' : '', text: [p.owner, p.due ? (overdue ? 'Overdue · ' : 'Due ') + day(p.due) : ''].filter(Boolean).join(' · ') }),
-              pr.t ? h('div', { class: 'bar' }, h('i', { style: 'width:' + pr.pct + '%' })) : null);
-          }) : h('p', { class: 'empty', style: 'padding:6px', text: '—' }));
-      })));
+      board);
+      paint();
+      function paint() {
+        board.innerHTML = '';
+        cols.forEach(function (s) {
+          var ps = r[0].items.filter(function (p) { return (p.status || 'planned') === s; }).sort(function (a, b) { return (a.due || '9') < (b.due || '9') ? -1 : 1; });
+          board.appendChild(h('section', { class: 'col', 'data-status': s, 'aria-label': lab(s) }, h('h3', null, lab(s), h('span', { text: String(ps.length) })),
+            ps.length ? ps.map(function (p) {
+              var pr = progress(r[1].items.filter(function (t) { return t.project_id === p.id; }));
+              var cl = clients[p.client_id] || {};
+              var overdue = p.due && p.due < today() && s !== 'done';
+              var card = h('a', { class: 'pc', href: '#/projects/' + p.id, title: 'Drag to move · Click to open' }, h('b', { text: p.name }), h('small', { text: cl.company || cl.name || '' }),
+                h('small', { style: overdue ? 'color:var(--err)' : '', text: [p.owner, p.due ? (overdue ? 'Overdue · ' : 'Due ') + day(p.due) : ''].filter(Boolean).join(' · ') }),
+                pr.t ? h('div', { class: 'bar' }, h('i', { style: 'width:' + pr.pct + '%' })) : null);
+              draggable(card, p);
+              return card;
+            }) : h('p', { class: 'hint', text: 'Drop a project here' })));
+        });
+      }
+      function moveTo(p, status) {
+        var prev = p.status || 'planned';
+        if (status === prev) return;
+        p.status = status; paint();
+        desk('PATCH', '/projects/' + p.id, { status: status }).then(function () { toast(p.name + ' → ' + lab(status)); })
+          .catch(function (x) { p.status = prev; paint(); toast(x.message, true); });
+      }
+      // Pointer-based drag so it works with a mouse, a trackpad or touch (long-press on touch).
+      function draggable(card, p) {
+        card.addEventListener('dragstart', function (e) { e.preventDefault(); });
+        card.addEventListener('pointerdown', function (e) {
+          if (e.button !== 0) return;
+          var sx = e.clientX, sy = e.clientY, rect = card.getBoundingClientRect(), ox = sx - rect.left, oy = sy - rect.top;
+          var touch = e.pointerType !== 'mouse', started = false, ghost = null, over = null, timer = null;
+          function begin(x, y) {
+            started = true;
+            ghost = card.cloneNode(true); ghost.classList.add('ghost'); ghost.removeAttribute('href'); ghost.style.width = rect.width + 'px';
+            document.body.appendChild(ghost); card.classList.add('lift'); document.body.classList.add('dragging');
+            place(x, y);
+          }
+          function place(x, y) {
+            ghost.style.left = (x - ox) + 'px'; ghost.style.top = (y - oy) + 'px';
+            var el = document.elementFromPoint(x, y); var col = el && el.closest ? el.closest('.board .col') : null;
+            if (col !== over) { if (over) over.classList.remove('over'); over = col; if (over) over.classList.add('over'); }
+            var br = board.getBoundingClientRect();
+            if (x > br.right - 40) board.scrollLeft += 12; else if (x < br.left + 40) board.scrollLeft -= 12;
+          }
+          function onMove(ev) {
+            if (ev.pointerId !== e.pointerId) return;
+            var dist = Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy);
+            if (!started) {
+              if (touch) { if (dist > 10) finish(); return; }
+              if (dist < 6) return;
+              begin(ev.clientX, ev.clientY);
+            }
+            ev.preventDefault(); place(ev.clientX, ev.clientY);
+          }
+          function onTouchMove(ev) { if (started) ev.preventDefault(); }
+          function finish(ev) {
+            clearTimeout(timer);
+            document.removeEventListener('pointermove', onMove); document.removeEventListener('pointerup', finish); document.removeEventListener('pointercancel', finish);
+            document.removeEventListener('touchmove', onTouchMove);
+            if (!started) return;
+            if (ghost) ghost.remove(); card.classList.remove('lift'); document.body.classList.remove('dragging');
+            if (over) over.classList.remove('over');
+            // swallow the click that follows a drag so the card doesn't open
+            var stop = function (c) { c.preventDefault(); c.stopPropagation(); };
+            card.addEventListener('click', stop, true);
+            setTimeout(function () { card.removeEventListener('click', stop, true); }, 0);
+            if (ev && ev.type === 'pointerup' && over) moveTo(p, over.getAttribute('data-status'));
+          }
+          if (touch) timer = setTimeout(function () { begin(sx, sy); if (navigator.vibrate) navigator.vibrate(10); }, 280);
+          document.addEventListener('pointermove', onMove, { passive: false });
+          document.addEventListener('pointerup', finish); document.addEventListener('pointercancel', finish);
+          document.addEventListener('touchmove', onTouchMove, { passive: false });
+        });
+      }
     }).catch(failed);
   }
   function projectView(id) {
@@ -572,11 +637,11 @@
             h('span', { class: 'grow' }, h('span', { class: 't', text: t.title }), (t.owner || t.due) ? h('span', { class: 'm', text: [t.owner, t.due ? 'Due ' + day(t.due) : ''].filter(Boolean).join(' · ') }) : null),
             h('div', { class: 'rowacts' },
               h('button', { type: 'button', text: 'Edit', onclick: function () {
-                modal({ title: 'Edit task', fields: [{ name: 'title', label: 'Task' }, { name: 'owner', label: 'Owner', half: true }, { name: 'due', label: 'Due', type: 'date', half: true }], values: t, onSubmit: function (v) {
+                modal({ title: 'Edit Task', fields: [{ name: 'title', label: 'Task' }, { name: 'owner', label: 'Owner', half: true }, { name: 'due', label: 'Due', type: 'date', half: true }], values: t, onSubmit: function (v) {
                   if (!v.title) throw new Error('Enter a task.'); return desk('PATCH', '/tasks/' + t.id, v).then(reload);
                 } });
               } }),
-              h('button', { class: 'danger', type: 'button', text: 'Delete', 'aria-label': 'Delete task', onclick: function () { desk('DELETE', '/tasks/' + t.id).then(reload); } })));
+              h('button', { class: 'danger', type: 'button', text: 'Delete', 'aria-label': 'Delete Task', onclick: function () { desk('DELETE', '/tasks/' + t.id).then(reload); } })));
           ul.appendChild(li);
         });
         var addIn = h('input', { class: 'search', style: 'max-width:none', placeholder: 'Add a task and press Enter', 'aria-label': 'New task' });
@@ -584,7 +649,7 @@
           e.preventDefault(); var v = addIn.value.trim(); if (!v) return;
           desk('POST', '/tasks', { project_id: p.id, title: v, position: tasks.length }).then(reload).catch(function (x) { toast(x.message, true); });
         } }, addIn, h('button', { class: 'pill small', type: 'submit', text: 'Add' }));
-        var tplSel = h('select', { class: 'search', style: 'max-width:260px;border-radius:12px', 'aria-label': 'Checklist' }, [h('option', { value: '', text: 'Add a checklist…' })].concat(Object.keys(META.templates).map(function (k) { return h('option', { value: k, text: META.templates[k].label }); })));
+        var tplSel = h('select', { class: 'search', style: 'max-width:260px;border-radius:12px', 'aria-label': 'Checklist' }, [h('option', { value: '', text: 'Add a Checklist…' })].concat(Object.keys(META.templates).map(function (k) { return h('option', { value: k, text: META.templates[k].label }); })));
         tplSel.addEventListener('change', function () { if (!tplSel.value) return; desk('POST', '/projects/' + p.id + '/checklist', { template: tplSel.value }).then(function (x) { toast(x.tasks.length + ' tasks added'); reload(); }); });
         var statusSel = h('select', { class: 'st ' + p.status, 'aria-label': 'Project status', onchange: function (e) { desk('PATCH', '/projects/' + p.id, { status: e.target.value }).then(function () { e.target.className = 'st ' + e.target.value; toast('Status updated'); }); } },
           META.project_status.map(function (s) { return h('option', { value: s, text: lab(s), selected: s === p.status ? 'selected' : null }); }));
@@ -610,7 +675,7 @@
       var pending = items.filter(function (a) { return a.status === 'pending'; });
       var recent = items.filter(function (a) { return a.status !== 'pending'; }).sort(function (a, b) { return (b.decided || '') < (a.decided || '') ? -1 : 1; }).slice(0, 20);
       var head = function () { return h('thead', null, h('tr', null, h('th', { text: 'Item' }), h('th', { text: 'Status' }), h('th', { text: 'Date' }), h('th', { class: 'num' }))); };
-      render(pageHead('Decisions', 'Approvals', [btn('New approval', function () {
+      render(pageHead('Decisions', 'Approvals', [btn('New Approval', function () {
         if (!r[1].items.length) { toast('Add a client first', true); return; }
         modal({ title: 'Which client?', submit: 'Next', fields: [{ name: 'client_id', label: 'Client', type: 'select', options: r[1].items.map(function (c) { return [c.id, c.company || c.name]; }) }], onSubmit: function (v) {
           setTimeout(function () { editApproval(null, v.client_id, approvalsView); }, 0);
@@ -618,7 +683,7 @@
       })]),
         h('div', { class: 'panel', style: 'padding:6px 0' }, h('h2', { style: 'padding:16px 22px 0' }, 'Waiting', h('small', null, String(pending.length))),
           pending.length ? h('table', { class: 'tbl' }, head(), h('tbody', null, pending.map(function (a) { return approvalRow(a, true, approvalsView); }))) : h('p', { class: 'empty', style: 'padding:0 22px 14px', text: 'Nothing is waiting on a decision.' })),
-        recent.length ? h('div', { class: 'panel', style: 'padding:6px 0;margin-top:18px' }, h('h2', { style: 'padding:16px 22px 0' }, 'Recently decided'),
+        recent.length ? h('div', { class: 'panel', style: 'padding:6px 0;margin-top:18px' }, h('h2', { style: 'padding:16px 22px 0' }, 'Recently Decided'),
           h('table', { class: 'tbl' }, head(), h('tbody', null, recent.map(function (a) { return approvalRow(a, true, approvalsView); })))) : null);
     }).catch(failed);
   }
@@ -629,7 +694,7 @@
     Promise.all([desk('GET', '/reports'), desk('GET', '/clients')]).then(function (r) {
       var names = {}; r[1].items.forEach(function (c) { names[c.id] = c.company || c.name; });
       var list = r[0].items.sort(function (a, b) { return a.period < b.period ? 1 : -1; });
-      render(pageHead('Results', 'Client reports', [btn('New report', function () { if (!r[1].items.length) { toast('Add a client first', true); return; } newReport(null, r[1].items); })]),
+      render(pageHead('Results', 'Client Reports', [btn('New Report', function () { if (!r[1].items.length) { toast('Add a client first', true); return; } newReport(null, r[1].items); })]),
         h('div', { class: 'card flush' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', { text: 'Month' }), h('th', { text: 'Client' }), h('th', { text: 'Highlights' }))),
           h('tbody', null, list.length ? list.map(function (rp) {
             var m = rp.metrics || {};
@@ -651,12 +716,12 @@
         var cpl = m.ad_spend && m.leads ? m.ad_spend / m.leads : null;
         render(pageHead(cname, [monthName(rp.period), h('em', { text: ' report' })], [btn('Edit', function () { location.hash = '#/reports/' + rp.id + '?edit=1'; }, 'ghost'), btn('Print / PDF', function () { window.print(); }, 'ghost'),
           btn('Delete', function () { if (!confirmDelete('this report')) return; desk('DELETE', '/reports/' + rp.id).then(function () { toast('Report deleted'); location.hash = '#/clients/' + c.id + '/reports'; }); }, 'ghost')], ['#/clients/' + c.id + '/reports', cname]),
-          keys.length ? h('div', { class: 'kpis' }, keys.map(function (k) { return kpi(k, history, prev); }), cpl !== null ? h('div', { class: 'kpi' }, h('div', { class: 'k', text: 'Cost per lead' }), h('div', { class: 'v', text: usd(cpl) }), h('div', { class: 'd', text: 'Ad spend ÷ leads' })) : null)
+          keys.length ? h('div', { class: 'kpis' }, keys.map(function (k) { return kpi(k, history, prev); }), cpl !== null ? h('div', { class: 'kpi' }, h('div', { class: 'k', text: 'Cost per Lead' }), h('div', { class: 'v', text: usd(cpl) }), h('div', { class: 'd', text: 'Ad spend ÷ leads' })) : null)
             : h('div', { class: 'panel' }, emptyLine('No numbers yet. Click Edit to add this month’s metrics.')),
           h('div', { class: 'grid g3 prose', style: 'margin-top:18px' },
-            h('div', { class: 'panel' }, h('h3', { text: 'What happened' }), h('p', { text: rp.summary || '—' })),
+            h('div', { class: 'panel' }, h('h3', { text: 'What Happened' }), h('p', { text: rp.summary || '—' })),
             h('div', { class: 'panel' }, h('h3', { text: 'Wins' }), h('p', { text: rp.wins || '—' })),
-            h('div', { class: 'panel' }, h('h3', { text: 'Next actions' }), h('p', { text: rp.next_actions || '—' }))));
+            h('div', { class: 'panel' }, h('h3', { text: 'Next Actions' }), h('p', { text: rp.next_actions || '—' }))));
       });
     }).catch(failed);
   }
@@ -671,7 +736,7 @@
       var pct = (cur - pv) / Math.abs(pv) * 100;
       var good = lowerBetter ? pct < 0 : pct > 0;
       delta = h('div', { class: 'd ' + (Math.abs(pct) < 0.5 || neutral ? '' : good ? 'up' : 'down'), text: (pct > 0 ? '▲ ' : pct < 0 ? '▼ ' : '') + Math.abs(pct).toFixed(0) + '% vs ' + monthShort(prev.period) });
-    } else delta = h('div', { class: 'd', text: prev ? 'No prior value' : 'First month' });
+    } else delta = h('div', { class: 'd', text: prev ? 'No Prior Value' : 'First Month' });
     var pts = history.filter(function (x) { return x.metrics && x.metrics[k] !== undefined; });
     var W = 240, H = 74, pad = 14, n = pts.length;
     var max = Math.max.apply(null, pts.map(function (x) { return x.metrics[k]; }).concat([0])) || 1;
@@ -698,7 +763,7 @@
   function hideTip() { tip.classList.remove('on'); }
   function reportEditor(rp, c) {
     var m = rp.metrics || {};
-    var groups = [['Search', ['seo_clicks', 'seo_impressions', 'seo_avg_position']], ['Website & leads', ['sessions', 'leads', 'revenue']], ['Advertising', ['ad_spend', 'ad_clicks', 'ad_conversions']], ['Social', ['social_followers', 'social_engagement']]];
+    var groups = [['Search', ['seo_clicks', 'seo_impressions', 'seo_avg_position']], ['Website & Leads', ['sessions', 'leads', 'revenue']], ['Advertising', ['ad_spend', 'ad_clicks', 'ad_conversions']], ['Social', ['social_followers', 'social_engagement']]];
     var form = h('form', { novalidate: true },
       groups.map(function (g) {
         return h('div', { class: 'panel', style: 'margin-bottom:16px' }, h('h2', null, g[0]), h('div', { class: 'metrics-form' }, g[1].map(function (k) {
@@ -707,11 +772,11 @@
       }),
       h('div', { class: 'panel' }, h('h2', null, 'Interpretation'),
         h('div', { style: 'display:flex;flex-direction:column;gap:16px' },
-          field({ name: 'summary', label: 'What happened this month', type: 'textarea', rows: 4 }, rp.summary),
+          field({ name: 'summary', label: 'What Happened This Month', type: 'textarea', rows: 4 }, rp.summary),
           field({ name: 'wins', label: 'Wins', type: 'textarea', rows: 3 }, rp.wins),
-          field({ name: 'next_actions', label: 'Next actions', type: 'textarea', rows: 3 }, rp.next_actions))),
+          field({ name: 'next_actions', label: 'Next Actions', type: 'textarea', rows: 3 }, rp.next_actions))),
       h('p', { class: 'err', id: 'rep-err', role: 'alert', hidden: true, style: 'margin-top:16px' }),
-      h('div', { class: 'toolbar', style: 'margin-top:18px;justify-content:flex-end' }, h('a', { class: 'pill ghost', href: '#/reports/' + rp.id, text: 'Cancel' }), h('button', { class: 'pill', type: 'submit', text: 'Save report' })));
+      h('div', { class: 'toolbar', style: 'margin-top:18px;justify-content:flex-end' }, h('a', { class: 'pill ghost', href: '#/reports/' + rp.id, text: 'Cancel' }), h('button', { class: 'pill', type: 'submit', text: 'Save Report' })));
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       var metrics = {}; META.metrics.forEach(function (k) { var v = form.elements[k].value.trim(); if (v !== '') metrics[k] = v; });
@@ -719,17 +784,17 @@
         .then(function () { toast('Report saved'); location.hash = '#/reports/' + rp.id; })
         .catch(function (x) { var er = document.getElementById('rep-err'); er.textContent = x.message; er.hidden = false; });
     });
-    render(pageHead(c.company || c.name, ['Edit ', h('em', { text: monthName(rp.period) })], null, ['#/reports/' + rp.id, 'Back to report']), form);
+    render(pageHead(c.company || c.name, ['Edit ', h('em', { text: monthName(rp.period) })], null, ['#/reports/' + rp.id, 'Back to Report']), form);
   }
 
   // ---------- invoices ----------
   function invoiceRow(inv, reload) {
     var overdue = inv.status === 'open' && inv.due_date && inv.due_date * 1000 < Date.now();
     var a = h('div', { class: 'rowacts' });
-    if (inv.pay_url) a.appendChild(h('button', { type: 'button', text: 'Copy link', onclick: function () { copy(inv.pay_url); } }));
+    if (inv.pay_url) a.appendChild(h('button', { type: 'button', text: 'Copy Link', onclick: function () { copy(inv.pay_url); } }));
     if (inv.status === 'open') {
       a.appendChild(h('button', { type: 'button', text: inv.emailed_at ? 'Resend' : 'Email', title: inv.emailed_at ? 'Last emailed ' + new Date(inv.emailed_at).toLocaleString() : 'Not emailed yet', onclick: function (e) { invAct(inv, 'send', e.target, reload); } }));
-      a.appendChild(h('button', { type: 'button', text: 'Mark paid', title: 'Paid by check or another way outside Stripe', onclick: function (e) { if (confirm('Mark ' + inv.number + ' as paid outside Stripe (check, cash, transfer)?')) invAct(inv, 'mark-paid', e.target, reload); } }));
+      a.appendChild(h('button', { type: 'button', text: 'Mark Paid', title: 'Paid by check or another way outside Stripe', onclick: function (e) { if (confirm('Mark ' + inv.number + ' as paid outside Stripe (check, cash, transfer)?')) invAct(inv, 'mark-paid', e.target, reload); } }));
       a.appendChild(h('button', { class: 'danger', type: 'button', text: 'Void', onclick: function (e) { if (confirm('Void ' + inv.number + '? The client will no longer be able to pay it. This can’t be undone.')) invAct(inv, 'void', e.target, reload); } }));
     }
     a.appendChild(h('a', { href: inv.stripe_url, target: '_blank', rel: 'noopener', text: 'Stripe ↗' }));
@@ -761,7 +826,7 @@
       } });
     });
     var formPanel = h('div');
-    render(pageHead('Billing', 'Invoices', [btn('New invoice', function () { openNew(null); })]), formPanel, h('div', { class: 'toolbar' }, chips), listWrap);
+    render(pageHead('Billing', 'Invoices', [btn('New Invoice', function () { openNew(null); })]), formPanel, h('div', { class: 'toolbar' }, chips), listWrap);
     load();
     function openNew(clientId) {
       desk('GET', '/clients').then(function (r) { formPanel.innerHTML = ''; formPanel.appendChild(invoiceForm(r.items, clientId, load, function () { formPanel.innerHTML = ''; })); formPanel.querySelector('select,input').focus(); });
@@ -772,11 +837,11 @@
     var tbody = h('tbody'); var totalEl = h('span', { text: '$0.00' });
     var err = h('p', { class: 'err', role: 'alert', hidden: true });
     var created = h('div', { hidden: true, style: 'display:flex;flex-direction:column;gap:12px' });
-    var pick = h('select', { 'aria-label': 'Desk client', onchange: function () { fill(pick.value); } }, [h('option', { value: '', text: 'Someone not in the Desk' })].concat(clients.slice().sort(function (a, b) { return (a.company || a.name).localeCompare(b.company || b.name); }).map(function (c) { return h('option', { value: c.id, text: (c.company || c.name) + (c.email ? ' · ' + c.email : ' (no email)'), selected: c.id === clientId ? 'selected' : null }); })));
+    var pick = h('select', { 'aria-label': 'Desk client', onchange: function () { fill(pick.value); } }, [h('option', { value: '', text: 'Someone Not in the Desk' })].concat(clients.slice().sort(function (a, b) { return (a.company || a.name).localeCompare(b.company || b.name); }).map(function (c) { return h('option', { value: c.id, text: (c.company || c.name) + (c.email ? ' · ' + c.email : ' (no email)'), selected: c.id === clientId ? 'selected' : null }); })));
     var email = h('input', { type: 'email', name: 'email', placeholder: 'client@company.com', autocomplete: 'off' });
     var name = h('input', { name: 'name', placeholder: 'Jordan Lee', autocomplete: 'off' });
     var company = h('input', { name: 'company', placeholder: 'Bacon Roofing', autocomplete: 'off' });
-    var due = h('select', { name: 'days' }, [['7', 'In 7 days'], ['14', 'In 14 days'], ['30', 'In 30 days'], ['45', 'In 45 days'], ['60', 'In 60 days']].map(function (o) { return h('option', { value: o[0], text: o[1], selected: o[0] === '14' ? 'selected' : null }); }));
+    var due = h('select', { name: 'days' }, [['7', 'In 7 Days'], ['14', 'In 14 Days'], ['30', 'In 30 Days'], ['45', 'In 45 Days'], ['60', 'In 60 Days']].map(function (o) { return h('option', { value: o[0], text: o[1], selected: o[0] === '14' ? 'selected' : null }); }));
     var memo = h('input', { name: 'memo', maxlength: 500, placeholder: 'e.g. November website refinements, per our proposal' });
     function fill(id) { var c = clients.filter(function (x) { return x.id === id; })[0]; if (!c) return; email.value = c.email || ''; name.value = c.name || ''; company.value = c.company || ''; }
     function lines() { return Array.prototype.map.call(tbody.children, function (tr) { return { description: tr.querySelector('.d').value.trim(), quantity: Number(tr.querySelector('.qv').value), unit_amount: tr.querySelector('.uv').value.replace(/[$,\s]/g, ''), tr: tr }; }); }
@@ -793,14 +858,14 @@
     addLine(); if (clientId) fill(clientId);
     var lbl = function (t, el) { return h('div', { class: 'fld' }, h('label', { text: t }), el); };
     var form = h('form', { novalidate: true, style: 'display:flex;flex-direction:column;gap:18px' },
-      lbl('Bill a Desk client', pick),
-      h('div', { class: 'grid g3' }, lbl('Client email', email), lbl('Contact name', name), lbl('Business', company)),
-      h('div', null, h('table', { class: 'items' }, h('thead', null, h('tr', null, h('th', { text: 'Description' }), h('th', { class: 'q', text: 'Qty' }), h('th', { class: 'u', text: 'Unit price ($)' }), h('th', { class: 'lt', text: 'Amount' }), h('th', { class: 'x' }))), tbody),
+      lbl('Bill a Desk Client', pick),
+      h('div', { class: 'grid g3' }, lbl('Client Email', email), lbl('Contact Name', name), lbl('Business', company)),
+      h('div', null, h('table', { class: 'items' }, h('thead', null, h('tr', null, h('th', { text: 'Description' }), h('th', { class: 'q', text: 'Qty' }), h('th', { class: 'u', text: 'Unit Price ($)' }), h('th', { class: 'lt', text: 'Amount' }), h('th', { class: 'x' }))), tbody),
         h('button', { class: 'add', type: 'button', text: '+ Add line', onclick: function () { addLine().querySelector('.d').focus(); } })),
-      h('div', { class: 'grid', style: 'grid-template-columns:minmax(0,1fr) minmax(0,2fr)' }, lbl('Due', due), lbl('Note to client (optional)', memo)),
+      h('div', { class: 'grid', style: 'grid-template-columns:minmax(0,1fr) minmax(0,2fr)' }, lbl('Due', due), lbl('Note to Client (Optional)', memo)),
       err,
       h('div', { class: 'ifoot' }, h('div', { class: 'total' }, h('small', { text: 'Total' }), totalEl),
-        h('div', { class: 'toolbar', style: 'margin:0' }, h('button', { class: 'pill ghost', type: 'submit', 'data-send': 'false', text: 'Create, don’t email' }), h('button', { class: 'pill', type: 'submit', 'data-send': 'true', text: 'Create & email invoice' }))));
+        h('div', { class: 'toolbar', style: 'margin:0' }, h('button', { class: 'pill ghost', type: 'submit', 'data-send': 'false', text: 'Create, Don’t Email' }), h('button', { class: 'pill', type: 'submit', 'data-send': 'true', text: 'Create & Email Invoice' }))));
     form.addEventListener('submit', function (e) {
       e.preventDefault(); err.hidden = true;
       var send = e.submitter ? e.submitter.dataset.send !== 'false' : true;
@@ -824,11 +889,11 @@
           var known = clients.some(function (c) { return (c.email || '').toLowerCase() === inv.customer_email; });
           if (!known) desk('POST', '/clients', { name: name.value.trim() || company.value.trim(), company: company.value.trim(), email: email.value.trim(), status: 'active' }).catch(function () {});
           form.hidden = true; created.hidden = false; created.innerHTML = '';
-          var link = h('input', { readonly: true, value: inv.pay_url || '', 'aria-label': 'Payment link' });
-          add(created, [h('p', { class: 'ok', text: msg + (known ? '' : ' Added to your Desk clients.') }), h('div', { class: 'linkbox' }, link, btn('Copy link', function () { copy(link.value); })), h('div', { class: 'toolbar', style: 'margin:0' }, btn('Create another', function () { onClose(); invoicesView({ new: 1 }); }, 'ghost'), btn('Done', onClose, 'ghost'))]);
+          var link = h('input', { readonly: true, value: inv.pay_url || '', 'aria-label': 'Payment Link' });
+          add(created, [h('p', { class: 'ok', text: msg + (known ? '' : ' Added to your Desk clients.') }), h('div', { class: 'linkbox' }, link, btn('Copy Link', function () { copy(link.value); })), h('div', { class: 'toolbar', style: 'margin:0' }, btn('Create Another', function () { onClose(); invoicesView({ new: 1 }); }, 'ghost'), btn('Done', onClose, 'ghost'))]);
           onDone();
         }).catch(function (x) { err.textContent = x.message; err.hidden = false; }).then(function () { btns.forEach(function (b) { b.disabled = false; }); });
     });
-    return h('div', { class: 'panel', style: 'margin-bottom:22px' }, h('h2', null, 'New invoice', h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close', text: '×', onclick: onClose })), form, created);
+    return h('div', { class: 'panel', style: 'margin-bottom:22px' }, h('h2', null, 'New Invoice', h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close', text: '×', onclick: onClose })), form, created);
   }
 })();

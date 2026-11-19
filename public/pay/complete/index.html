@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Payment status — Aethera Digital</title>
+<title>Payment Status — Aethera Digital</title>
 <meta name="robots" content="noindex">
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#000000">
@@ -28,13 +28,13 @@ dt{color:var(--mute)}dd{margin:0}
 </style>
 </head>
 <body>
-<header class="topbar"><a class="logo" href="/" aria-label="Aethera Digital home"><img src="/assets/icon.png" alt="" width="34" height="34"></a><a class="back" href="/pay/">Client payments</a></header>
+<header class="topbar"><a class="logo" href="/" aria-label="Aethera Digital home"><img src="/assets/icon.png" alt="" width="34" height="34"></a><a class="back" href="/pay/">Client Payments</a></header>
 <main class="stage">
 <div class="orb" style="background: #C8B6FF; left: 10%; top: 0" aria-hidden="true"></div>
 <div class="orb" style="background: #FFC4A8; right: 5%; bottom: 0" aria-hidden="true"></div>
 
 <section class="card" id="loading" aria-live="polite">
-<p class="eyebrow">Client payments</p>
+<p class="eyebrow">Client Payments</p>
 <h1>Confirming your payment…</h1>
 <div class="dots" style="margin-top: 28px" aria-hidden="true"><span></span><span></span><span></span></div>
 </section>
@@ -69,7 +69,7 @@ dt{color:var(--mute)}dd{margin:0}
   }
   function failed() {
     result('bad', 'Payment <em>not completed.</em>', 'Your payment didn’t go through and you haven’t been charged. You can try again, or email hello@aetheradigital.com and we’ll help.');
-    btn(invoiceUrl || '/pay/', 'Try again'); btn('mailto:hello@aetheradigital.com', 'Email us', true);
+    btn(invoiceUrl || '/pay/', 'Try Again'); btn('mailto:hello@aetheradigital.com', 'Email Us', true);
   }
 
   if (!secret) { failed(); return; }
@@ -94,8 +94,8 @@ dt{color:var(--mute)}dd{margin:0}
         row('Amount', amount);
         if (i && k) fetch('/api/invoice?i=' + encodeURIComponent(i) + '&k=' + encodeURIComponent(k)).then(function (x) { return x.json(); }).then(function (inv) { if (inv && inv.number) row('Invoice', inv.number); }).catch(function () {});
       }
-      btn('/', 'Back to home');
-      if (kind === 'invoice' && invoiceUrl) btn(invoiceUrl, 'View invoice', true);
+      btn('/', 'Back to Home');
+      if (kind === 'invoice' && invoiceUrl) btn(invoiceUrl, 'View Invoice', true);
       return;
     }
     failed();
