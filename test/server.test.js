@@ -62,7 +62,7 @@ function request(port, method, p, body, headers) {
       let data = ''; res.on('data', (c) => (data += c)); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: data }));
     });
     req.on('error', reject);
-    if (body) req.write(typeof body === 'string' ? body : JSON.stringify(body));
+    if (body) req.write(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
     req.end();
   });
 }
@@ -76,7 +76,7 @@ function request(port, method, p, body, headers) {
       PORT: String(port), STRIPE_SECRET_KEY: 'sk_test_fake', STRIPE_PUBLISHABLE_KEY: 'pk_test_fake',
       STRIPE_API_BASE: 'http://127.0.0.1:' + stripePort, SITE_URL: 'https://aetheradigital.com',
       STRIPE_WEBHOOK_SECRET: WHSEC, PAYMENTS_NOTIFY_URL: 'http://127.0.0.1:' + stripePort + '/notify', PAYMENTS_NOTIFY_TOKEN: 'tok123',
-      ADMIN_PASSWORD: ADMIN_PW
+      ADMIN_PASSWORD: ADMIN_PW, DATABASE_URL: process.env.TEST_DATABASE_URL || ''
     }),
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -263,6 +263,80 @@ function request(port, method, p, body, headers) {
     assert.ok(/Max-Age=0/.test(r.headers['set-cookie'][0]));
     ok('admin actions: void, resend, mark paid outside Stripe; logout clears the cookie');
 
+    // ---------- Aethera Desk ----------
+    const A = { Cookie: cookie };
+    const dj = async (method, path, body, extra) => { const x = await request(port, method, '/api/admin/desk' + path, body, Object.assign({}, A, extra || {})); let b = null; try { b = JSON.parse(x.body); } catch (e) { b = x.body; } return { status: x.status, body: b, headers: x.headers }; };
+    r = await request(port, 'GET', '/api/admin/desk/meta');
+    assert.strictEqual(r.status, 401);
+    let d = await dj('GET', '/meta');
+    assert.strictEqual(d.status, 200); assert.ok(d.body.templates.website && d.body.services.length === 8);
+    ok('desk: locked without sign-in; meta lists checklists and the eight services (' + d.body.store + ')');
+
+    d = await dj('POST', '/clients', { name: 'Pat Lee', company: 'Bacon Roofing', email: 'pat@baconroofing.com', status: 'active', monthly_value: '$2,250', services: ['SEO & AI Search Visibility'], next_step: 'Send proposal', next_date: '2020-01-01' });
+    assert.strictEqual(d.status, 200, JSON.stringify(d.body)); const cl = d.body.item;
+    assert.ok(/^cli_/.test(cl.id)); assert.strictEqual(cl.monthly_value, 2250); assert.strictEqual(cl.status, 'active');
+    assert.strictEqual((await dj('POST', '/clients', { company: 'No name' })).status, 400);
+    assert.strictEqual((await dj('POST', '/clients', { name: 'X', status: 'bogus' })).status, 400);
+    assert.strictEqual((await dj('POST', '/clients', { name: 'X', services: ['Hacking'] })).status, 400);
+    d = await dj('PATCH', '/clients/' + cl.id, { notes: "O'Brien; drop table desk_records; --", status: 'active' });
+    assert.strictEqual(d.body.item.notes, "O'Brien; drop table desk_records; --"); assert.strictEqual(d.body.item.company, 'Bacon Roofing');
+    ok('desk clients: create, validate, partial update (text stored safely)');
+
+    d = await dj('POST', '/projects', { client_id: cl.id, name: 'Website refresh', owner: 'Joseph', due: '2030-02-01' });
+    assert.strictEqual(d.status, 200); const pr = d.body.item; assert.strictEqual(pr.status, 'planned'); assert.strictEqual(pr.client_id, cl.id);
+    assert.strictEqual((await dj('POST', '/projects', { client_id: 'cli_doesnotexist', name: 'X' })).status, 400);
+    d = await dj('POST', '/projects/' + pr.id + '/checklist', { template: 'website' });
+    assert.strictEqual(d.status, 200); assert.strictEqual(d.body.tasks.length, 12); assert.strictEqual(d.body.tasks[0].client_id, cl.id);
+    const tk = d.body.tasks[0];
+    d = await dj('PATCH', '/tasks/' + tk.id, { done: true, owner: 'Nick', due: '2020-01-02', project_id: 'prj_hijack' });
+    assert.strictEqual(d.body.item.done, true); assert.strictEqual(d.body.item.project_id, pr.id);
+    d = await dj('POST', '/tasks', { project_id: pr.id, title: 'Overdue thing', due: '2020-01-03' });
+    assert.strictEqual(d.status, 200);
+    ok('desk projects: create under a client, apply website checklist (12 tasks), tick tasks; links can’t be changed');
+
+    d = await dj('POST', '/approvals', { client_id: cl.id, title: 'Homepage design', kind: 'approval' });
+    assert.strictEqual(d.status, 200); assert.strictEqual(d.body.item.status, 'pending');
+    d = await dj('POST', '/reports', { client_id: cl.id, period: '2026-10', metrics: { seo_clicks: '1,204', leads: 18, ad_spend: '$950.50' }, summary: 'Strong month' });
+    assert.strictEqual(d.status, 200); assert.strictEqual(d.body.item.metrics.seo_clicks, 1204); assert.strictEqual(d.body.item.metrics.ad_spend, 950.5);
+    assert.strictEqual((await dj('POST', '/reports', { client_id: cl.id, period: '2026-10' })).status, 409);
+    assert.strictEqual((await dj('POST', '/reports', { client_id: cl.id, period: '2026-13' })).status, 400);
+    ok('desk approvals and monthly reports: defaults, metrics parsed, one report per month');
+
+    const fileBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 255]);
+    let up = await request(port, 'POST', '/api/admin/desk/files?client_id=' + cl.id + '&category=brand&name=' + encodeURIComponent('logo "final".png'), fileBytes, Object.assign({ 'Content-Type': 'image/png' }, A));
+    assert.strictEqual(up.status, 200, up.body); const fl = JSON.parse(up.body).file;
+    assert.strictEqual(fl.size, 8); assert.strictEqual(fl.category, 'brand'); assert.ok(!fl.name.includes('"'));
+    const dl = await new Promise((resolve) => { http.get({ host: '127.0.0.1', port, path: '/api/admin/desk/files/' + fl.id, headers: A }, (rs) => { const ch = []; rs.on('data', (c) => ch.push(c)); rs.on('end', () => resolve({ status: rs.statusCode, headers: rs.headers, body: Buffer.concat(ch) })); }); });
+    assert.strictEqual(dl.status, 200); assert.ok(dl.body.equals(fileBytes)); assert.ok(/attachment/.test(dl.headers['content-disposition']));
+    assert.strictEqual(dl.headers['content-type'], 'application/octet-stream');
+    up = await request(port, 'POST', '/api/admin/desk/files?client_id=cli_nope&name=x', 'abc', Object.assign({ 'Content-Type': 'text/plain' }, A));
+    assert.strictEqual(up.status, 400);
+    ok('desk files: upload binary, download as attachment byte-for-byte; unknown client refused');
+
+    calls.length = 0;
+    d = await dj('GET', '/clients/' + cl.id + '/full');
+    assert.strictEqual(d.status, 200);
+    assert.strictEqual(d.body.projects.length, 1); assert.strictEqual(d.body.tasks.length, 13); assert.strictEqual(d.body.approvals.length, 1);
+    assert.strictEqual(d.body.reports.length, 1); assert.strictEqual(d.body.files.length, 1); assert.ok(!('content' in d.body.files[0]));
+    assert.ok(calls.some((x) => x.path === '/v1/customers' && x.query.get('email') === 'pat@baconroofing.com'));
+    d = await dj('GET', '/overview');
+    assert.strictEqual(d.body.active_clients, 1); assert.strictEqual(d.body.monthly_recurring, 2250);
+    assert.ok(d.body.tasks_due.some((t) => t.title === 'Overdue thing' && t.overdue && t.client === 'Bacon Roofing'));
+    assert.strictEqual(d.body.approvals_pending.length, 1); assert.strictEqual(d.body.follow_ups[0].overdue, true);
+    assert.ok(d.body.billing && typeof d.body.billing.open_total === 'number');
+    ok('desk client profile bundles projects, tasks, approvals, reports, files and Stripe invoices; overview adds it up');
+
+    r = await request(port, 'POST', '/api/admin/desk/clients', { name: 'Evil' }, Object.assign({ Origin: 'https://evil.example' }, A));
+    assert.strictEqual(r.status, 403);
+    r = await request(port, 'GET', '/api/admin/desk/clients', null, { Host: 'aetheradigital.com', Cookie: cookie });
+    assert.strictEqual(r.status, 404);
+    d = await dj('DELETE', '/clients/' + cl.id);
+    assert.strictEqual(d.status, 200);
+    assert.strictEqual((await dj('GET', '/clients/' + cl.id + '/full')).status, 404);
+    d = await dj('GET', '/tasks?project_id=' + pr.id); assert.strictEqual(d.body.items.length, 0);
+    assert.strictEqual((await dj('GET', '/files/' + fl.id)).status, 404);
+    ok('desk: cross-origin writes and public-domain access refused; deleting a client removes its projects, tasks and files');
+
     // ---------- webhook ----------
     const sign = (payload, t, secret) => {
       t = t || Math.floor(Date.now() / 1000);
@@ -388,7 +462,7 @@ function request(port, method, p, body, headers) {
 
     console.log('\n' + passed + ' passed');
   } catch (e) {
-    console.error('\nFAILED:', e.message); process.exitCode = 1;
+    console.error('\nFAILED:', e.stack); process.exitCode = 1;
   } finally {
     child.kill(); fakeStripe.close();
   }

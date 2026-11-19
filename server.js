@@ -23,6 +23,8 @@
  *   STRIPE_WEBHOOK_SECRET   whsec_... signing secret of the webhook endpoint (/api/stripe/webhook)
  *   PAYMENTS_NOTIFY_URL     optional: Apps Script web app URL (payments sheet, alerts and invoice emails)
  *   PAYMENTS_NOTIFY_TOKEN   optional: shared token checked by the Apps Script (PAYMENTS_TOKEN script property)
+ *   DATABASE_URL            Postgres connection string for the Aethera Desk (Render internal URL). Without it the Desk
+ *                           keeps data in memory only (lost on restart) and says so on screen.
  */
 const http = require('http');
 const fs = require('fs');
@@ -409,6 +411,8 @@ function adminRow(inv, origin) {
 }
 
 async function adminList(req, res, url) {
+  const email = clip(url.searchParams.get('email'), 200).toLowerCase();
+  if (email) return json(res, 200, { invoices: await stripeInvoicesFor(email, originOf(req)), testMode: /^sk_test_|^rk_test_/.test(SECRET) });
   const params = { limit: 50 };
   const st = url.searchParams.get('status');
   if (['draft', 'open', 'paid', 'void', 'uncollectible'].indexOf(st) >= 0) params.status = st;
@@ -542,6 +546,192 @@ async function adminAction(req, res, id, action) {
   }
 }
 
+// ---------- Aethera Desk (clients, projects, checklists, files, approvals, reports) ----------
+const deskLib = require('./lib/desk');
+const desk = deskLib.createStore(process.env.DATABASE_URL || '');
+let deskReady = null;
+function deskInit() {
+  if (!deskReady) deskReady = desk.init().catch(function (e) { deskReady = null; throw e; });
+  return deskReady;
+}
+const MAX_FILE_BYTES = 15 * 1024 * 1024;
+
+async function stripeInvoicesFor(email, origin) {
+  if (!SECRET || !email) return [];
+  const customers = await stripe('GET', '/v1/customers', { email: email, limit: 10 });
+  const out = [];
+  for (const c of customers.data || []) {
+    const list = await stripe('GET', '/v1/invoices', { customer: c.id, limit: 50 });
+    (list.data || []).forEach(function (inv) { out.push(adminRow(inv, origin)); });
+  }
+  return out.sort(function (a, b) { return b.created - a.created; });
+}
+
+async function deskOverview(req, res) {
+  const clients = await desk.allOf('client');
+  const projects = await desk.allOf('project');
+  const tasks = await desk.allOf('task');
+  const approvals = await desk.allOf('approval');
+  const today = new Date().toISOString().slice(0, 10);
+  const week = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
+  const byId = {}; clients.forEach(function (c) { byId[c.id] = c; });
+  const projById = {}; projects.forEach(function (p) { projById[p.id] = p; });
+  const status = {}; deskLib.CLIENT_STATUS.forEach(function (s) { status[s] = 0; });
+  clients.forEach(function (c) { status[c.status || 'lead'] = (status[c.status || 'lead'] || 0) + 1; });
+  const active = clients.filter(function (c) { return c.status === 'active'; });
+  const openTasks = tasks.filter(function (t) { return !t.done && t.due; });
+  const name = function (cid) { return byId[cid] ? (byId[cid].company || byId[cid].name) : ''; };
+  const out = {
+    store: desk.kind,
+    pipeline: status,
+    active_clients: active.length,
+    monthly_recurring: active.reduce(function (s, c) { return s + (Number(c.monthly_value) || 0); }, 0),
+    projects_open: projects.filter(function (p) { return p.status !== 'done'; }).length,
+    tasks_due: openTasks.filter(function (t) { return t.due <= week; }).sort(function (a, b) { return a.due < b.due ? -1 : 1; }).slice(0, 12).map(function (t) {
+      const pr = projById[t.project_id] || {};
+      return { id: t.id, title: t.title, due: t.due, overdue: t.due < today, owner: t.owner || '', project_id: t.project_id, project: pr.name || '', client_id: t.client_id, client: name(t.client_id) };
+    }),
+    approvals_pending: approvals.filter(function (a) { return (a.status || 'pending') === 'pending'; }).map(function (a) {
+      return { id: a.id, title: a.title, kind: a.kind || 'approval', requested: a.requested || '', client_id: a.client_id, client: name(a.client_id) };
+    }),
+    follow_ups: clients.filter(function (c) { return c.next_date && c.status !== 'past'; }).sort(function (a, b) { return a.next_date < b.next_date ? -1 : 1; }).slice(0, 8).map(function (c) {
+      return { id: c.id, client: c.company || c.name, next_step: c.next_step || '', next_date: c.next_date, overdue: c.next_date < today, status: c.status };
+    }),
+    billing: null
+  };
+  if (SECRET) {
+    try {
+      const list = await stripe('GET', '/v1/invoices', { limit: 100 });
+      const now = Date.now() / 1000; const monthAgo = now - 30 * 86400;
+      const inv = list.data || [];
+      const open = inv.filter(function (i) { return i.status === 'open'; });
+      out.billing = {
+        open_count: open.length,
+        open_total: open.reduce(function (s, i) { return s + i.amount_remaining; }, 0),
+        overdue_count: open.filter(function (i) { return i.due_date && i.due_date < now; }).length,
+        paid_30d: inv.filter(function (i) { return i.status === 'paid' && i.status_transitions && i.status_transitions.paid_at >= monthAgo; }).reduce(function (s, i) { return s + i.amount_paid; }, 0),
+        test_mode: /^sk_test_|^rk_test_/.test(SECRET)
+      };
+    } catch (e) { console.error('desk_overview_billing_failed', e.message); }
+  }
+  return json(res, 200, out);
+}
+
+async function deskApi(req, res, url) {
+  try { await deskInit(); } catch (e) {
+    console.error('desk_db_unavailable', e.message);
+    return json(res, 503, { error: 'The Desk database is unavailable right now.' });
+  }
+  const p = url.pathname.replace(/^\/api\/admin\/desk/, '') || '/';
+  const m = req.method;
+  if (p === '/meta' && m === 'GET') {
+    const templates = {}; Object.keys(deskLib.TEMPLATES).forEach(function (k) { templates[k] = { label: deskLib.TEMPLATES[k].label, count: deskLib.TEMPLATES[k].tasks.length }; });
+    return json(res, 200, { store: desk.kind, templates: templates, services: deskLib.SERVICES, client_status: deskLib.CLIENT_STATUS, project_status: deskLib.PROJECT_STATUS, approval_status: deskLib.APPROVAL_STATUS, approval_kind: deskLib.APPROVAL_KIND, file_category: deskLib.FILE_CATEGORY, metrics: deskLib.METRICS });
+  }
+  if (p === '/overview' && m === 'GET') return deskOverview(req, res);
+
+  // client profile with everything attached
+  let mm = p.match(/^\/clients\/([a-z]{3}_[A-Za-z0-9_-]+)\/full$/);
+  if (mm && m === 'GET') {
+    const c = await desk.get('client', mm[1]);
+    if (!c) return json(res, 404, { error: 'Client not found.' });
+    const [projects, tasks, approvals, reports, files] = await Promise.all([
+      desk.list('project', { client_id: c.id }), desk.list('task', { client_id: c.id }), desk.list('approval', { client_id: c.id }),
+      desk.list('report', { client_id: c.id }), desk.listFiles(c.id)]);
+    let invoices = []; let invoiceError = null;
+    try { invoices = await stripeInvoicesFor(c.email, originOf(req)); } catch (e) { invoiceError = 'Couldn’t load invoices from Stripe.'; }
+    return json(res, 200, { client: c, projects: projects, tasks: tasks, approvals: approvals, reports: reports.sort(function (a, b) { return a.period < b.period ? 1 : -1; }), files: files, invoices: invoices, invoice_error: invoiceError });
+  }
+
+  // apply a checklist template to a project
+  mm = p.match(/^\/projects\/([a-z]{3}_[A-Za-z0-9_-]+)\/checklist$/);
+  if (mm && m === 'POST') {
+    const body = await readJson(req, 2048);
+    const tpl = body && deskLib.TEMPLATES[body.template];
+    if (!tpl) return json(res, 400, { error: 'Choose a checklist.' });
+    const pr = await desk.get('project', mm[1]);
+    if (!pr) return json(res, 404, { error: 'Project not found.' });
+    const existing = await desk.list('task', { project_id: pr.id });
+    const created = [];
+    for (let i = 0; i < tpl.tasks.length; i++) {
+      created.push(await desk.create('task', { title: tpl.tasks[i], done: false, position: existing.length + i, project_id: pr.id }, { client_id: pr.client_id, project_id: pr.id }));
+    }
+    return json(res, 200, { tasks: created });
+  }
+
+  // files
+  if (p === '/files' && m === 'POST') {
+    const cid = url.searchParams.get('client_id') || '';
+    const client = /^cli_/.test(cid) ? await desk.get('client', cid) : null;
+    if (!client) return json(res, 400, { error: 'Choose a client.' });
+    const category = deskLib.FILE_CATEGORY.indexOf(url.searchParams.get('category')) >= 0 ? url.searchParams.get('category') : 'other';
+    const name = clip(url.searchParams.get('name') || 'file', 200).replace(/[\\/\0\r\n"]/g, '_');
+    let content;
+    try { content = await readRaw(req, MAX_FILE_BYTES); } catch (e) { return json(res, 413, { error: 'Files can be up to 15 MB.' }); }
+    if (!content.length) return json(res, 400, { error: 'That file is empty.' });
+    const mime = clip(String(req.headers['content-type'] || 'application/octet-stream').split(';')[0], 100);
+    return json(res, 200, { file: await desk.putFile({ client_id: client.id, name: name, mime: mime, category: category, content: content }) });
+  }
+  mm = p.match(/^\/files\/(fil_[A-Za-z0-9_-]+)$/);
+  if (mm && m === 'GET') {
+    const f = await desk.getFile(mm[1]);
+    if (!f) return json(res, 404, { error: 'File not found.' });
+    return send(res, 200, f.content, {
+      'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store',
+      'Content-Disposition': 'attachment; filename="' + String(f.name).replace(/[^\x20-\x7e]/g, '_') + '"; filename*=UTF-8\'\'' + encodeURIComponent(f.name)
+    });
+  }
+  if (mm && m === 'DELETE') { await desk.removeFile(mm[1]); return json(res, 200, { ok: true }); }
+
+  // generic records: /clients, /projects, /tasks, /approvals, /reports (+ /:id)
+  mm = p.match(/^\/(clients|projects|tasks|approvals|reports)(?:\/([a-z]{3}_[A-Za-z0-9_-]+))?$/);
+  if (!mm) return json(res, 404, { error: 'Not found' });
+  const type = deskLib.PLURAL[mm[1]]; const id = mm[2];
+  if (!id && m === 'GET') {
+    const where = {};
+    if (url.searchParams.get('client_id')) where.client_id = url.searchParams.get('client_id');
+    if (url.searchParams.get('project_id')) where.project_id = url.searchParams.get('project_id');
+    return json(res, 200, { items: await desk.list(type, where) });
+  }
+  if (!id && m === 'POST') {
+    const body = await readJson(req, 65536);
+    const v = deskLib.validate(type, body, false);
+    if (v.error) return json(res, 400, { error: v.error });
+    const links = {};
+    if (type === 'client') { v.data.status = v.data.status || 'lead'; }
+    else if (deskLib.SCHEMA[type].parent === 'client') {
+      if (!(await desk.get('client', v.data.client_id))) return json(res, 400, { error: 'Client not found.' });
+      links.client_id = v.data.client_id;
+    } else if (type === 'task') {
+      const pr = await desk.get('project', v.data.project_id);
+      if (!pr) return json(res, 400, { error: 'Project not found.' });
+      links.project_id = pr.id; links.client_id = pr.client_id;
+    }
+    if (type === 'project') v.data.status = v.data.status || 'planned';
+    if (type === 'approval') { v.data.status = v.data.status || 'pending'; v.data.kind = v.data.kind || 'approval'; v.data.requested = v.data.requested || new Date().toISOString().slice(0, 10); }
+    if (type === 'task' && v.data.done === undefined) v.data.done = false;
+    if (type === 'report') {
+      const dup = (await desk.list('report', { client_id: v.data.client_id })).find(function (r) { return r.period === v.data.period; });
+      if (dup) return json(res, 409, { error: 'There’s already a report for that month. Open it to edit.' });
+    }
+    return json(res, 200, { item: await desk.create(type, v.data, links) });
+  }
+  if (id && m === 'GET') {
+    const item = await desk.get(type, id);
+    return item ? json(res, 200, { item: item }) : json(res, 404, { error: 'Not found.' });
+  }
+  if (id && m === 'PATCH') {
+    const body = await readJson(req, 65536);
+    if (body) { delete body.client_id; delete body.project_id; }
+    const v = deskLib.validate(type, body, true);
+    if (v.error) return json(res, 400, { error: v.error });
+    const item = await desk.update(type, id, v.data);
+    return item ? json(res, 200, { item: item }) : json(res, 404, { error: 'Not found.' });
+  }
+  if (id && m === 'DELETE') { await desk.remove(type, id); return json(res, 200, { ok: true }); }
+  return json(res, 405, { error: 'Method not allowed' });
+}
+
 async function adminApi(req, res, url) {
   const p = url.pathname;
   if (p === '/api/admin/login' && req.method === 'POST') return adminLogin(req, res);
@@ -549,6 +739,12 @@ async function adminApi(req, res, url) {
   if (p === '/api/admin/me' && req.method === 'GET') return json(res, 200, { admin: isAdmin(req), configured: Boolean(ADMIN_PASSWORD), payments: Boolean(SECRET) });
   if (!isAdmin(req)) return json(res, 401, { error: 'Please sign in.' });
   if (req.method !== 'GET' && !sameOrigin(req)) return json(res, 403, { error: 'Forbidden' });
+  if (p.startsWith('/api/admin/desk/')) {
+    try { return await deskApi(req, res, url); } catch (e) {
+      console.error('desk_failed', req.method, p, e.code || '', e.message);
+      return json(res, 500, { error: 'Something went wrong saving that. Please try again.' });
+    }
+  }
   if (!SECRET) return json(res, 503, { error: 'Stripe keys are not configured.' });
   if (p === '/api/admin/invoices' && req.method === 'GET') {
     try { return await adminList(req, res, url); } catch (e) {
