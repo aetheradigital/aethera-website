@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invoices — Aethera Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#000000">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,200;0,300;0,400;0,600;1,300&amp;family=Nunito+Sans:wght@400;600;700&amp;display=swap">
+<link rel="stylesheet" href="/assets/pay.css">
+<style>
+body{font-size:16px}
+.inner{max-width:1180px}
+.login{max-width:440px;margin:8vh auto 0}
+.login h1{font-size:44px;margin:14px 0 24px}
+.login form{display:flex;flex-direction:column;gap:16px}
+.head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:28px}
+.head h1{font-size:clamp(40px,5vw,60px);margin-top:12px}
+.head .acts{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.mode{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:6px 12px;border-radius:999px;background:#F6E7A1;color:#000}
+.mode.live{background:var(--sage)}
+.new{margin-bottom:28px}
+.new h2{font-size:30px;margin-bottom:22px}
+.new form{display:flex;flex-direction:column;gap:20px}
+.row3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.items{width:100%;border-collapse:separate;border-spacing:0 10px}
+.items th{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--mute);font-weight:600;text-align:left;padding:0 6px}
+.items td{padding:0 6px;vertical-align:middle}
+.items td:first-child,.items th:first-child{padding-left:0}
+.items input{font:inherit;font-size:16px;color:#fff;background:var(--field);border:1px solid rgba(255,255,255,.16);border-radius:12px;padding:12px 14px;outline:none;width:100%}
+.items input:focus{border-color:var(--lav);box-shadow:0 0 0 3px rgba(200,182,255,.28)}
+.items .q{width:90px}.items .u{width:150px}.items .lt{width:130px;text-align:right;white-space:nowrap;color:#D6D6DC}
+.items .x{width:44px}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--mute);transition:background .2s,color .2s}
+.icon-btn:hover{background:rgba(255,255,255,.08);color:#fff}
+.add{align-self:flex-start;background:none;border:0;color:var(--lav);font:inherit;font-weight:600;padding:6px 0}
+.add:hover{color:#fff}
+.foot{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding-top:20px;border-top:1px solid var(--line)}
+.total{font-family:"Raleway",sans-serif;font-size:34px;font-weight:300}
+.total small{font-family:inherit;font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--mute);margin-right:12px;font-weight:600}
+.foot .btns{display:flex;gap:10px;flex-wrap:wrap}
+.created{display:flex;flex-direction:column;gap:12px}
+.linkbox{display:flex;gap:10px;align-items:center}
+.linkbox input{flex:1;font:inherit;font-size:14px;color:#D6D6DC;background:var(--field);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.chip{font:inherit;font-size:14px;font-weight:600;padding:8px 16px;border-radius:999px;border:1px solid var(--line);background:transparent;color:#D6D6DC}
+.chip:hover{border-color:rgba(255,255,255,.35);color:#fff}
+.chip[aria-pressed="true"]{background:#fff;color:#000;border-color:#fff}
+.list{padding:8px 0}
+table.inv{width:100%;border-collapse:collapse}
+table.inv th{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--mute);font-weight:600;text-align:left;padding:14px 20px;border-bottom:1px solid var(--line)}
+table.inv td{padding:16px 20px;border-bottom:1px solid var(--line);vertical-align:middle}
+table.inv tr:last-child td{border-bottom:0}
+table.inv .num{text-align:right;white-space:nowrap}
+.who{display:flex;flex-direction:column}
+.who small{color:var(--mute);font-size:13px}
+.no{font-weight:600;white-space:nowrap}
+.no small{display:block;color:var(--mute);font-weight:400;font-size:12px}
+.rowacts{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+.rowacts button,.rowacts a{font:inherit;font-size:13px;font-weight:600;padding:7px 12px;border-radius:999px;border:1px solid var(--line);background:transparent;color:#fff;text-decoration:none;white-space:nowrap}
+.rowacts button:hover,.rowacts a:hover{background:#fff;color:#000;border-color:#fff}
+.rowacts .danger:hover{background:var(--err);border-color:var(--err)}
+.empty{padding:48px 20px;text-align:center;color:var(--mute)}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;z-index:80;padding:12px 20px;border-radius:999px;background:#fff;color:#000;font-weight:700;font-size:14px;box-shadow:0 12px 40px rgba(0,0,0,.5);transition:opacity .3s,transform .3s;pointer-events:none;max-width:calc(100% - 32px);text-align:center}
+.toast.on{opacity:1;transform:translateX(-50%)}
+.toast.bad{background:var(--err)}
+@media (max-width:860px){.row3{grid-template-columns:minmax(0,1fr)}table.inv thead{display:none}table.inv tr{display:grid;grid-template-columns:1fr auto;gap:6px 12px;padding:16px 20px;border-bottom:1px solid var(--line)}table.inv td{padding:0;border:0}table.inv td.c-acts{grid-column:1 / -1}.rowacts{justify-content:flex-start}.items .u{width:110px}.items .lt{display:none}}
+</style>
+</head>
+<body>
+<header class="topbar"><a class="logo" href="/" aria-label="Aethera Digital home"><img src="/assets/icon.png" alt="" width="34" height="34"></a><span class="eyebrow">Aethera admin</span></header>
+<main class="stage">
+<div class="orb" style="background: #C8B6FF; left: -10%; top: -10%" aria-hidden="true"></div>
+<div class="inner">
+
+<section class="card login" id="login" hidden>
+<p class="eyebrow">Aethera admin</p>
+<h1>Sign <em>in.</em></h1>
+<form id="login-form" novalidate>
+<div class="fld"><label for="pw">Password</label><input id="pw" name="password" type="password" autocomplete="current-password" required></div>
+<p class="err" id="login-err" role="alert" hidden></p>
+<button class="pill block" type="submit">Sign in</button>
+</form>
+</section>
+
+<div id="app" hidden>
+<div class="head">
+<div><p class="eyebrow">Billing</p><h1>Invoices</h1></div>
+<div class="acts"><span class="mode" id="mode" hidden>Test mode</span><button class="pill small" type="button" id="new-btn">New invoice</button><button class="pill small ghost" type="button" id="logout">Sign out</button></div>
+</div>
+
+<section class="card new" id="new" hidden aria-labelledby="new-h">
+<div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px">
+<h2 id="new-h">New <em>invoice.</em></h2>
+<button class="icon-btn" type="button" id="new-close" aria-label="Close"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"></path></svg></button>
+</div>
+<form id="new-form" novalidate>
+<div class="row3">
+<div class="fld"><label for="c-email">Client email</label><input id="c-email" name="email" type="email" autocomplete="off" required placeholder="client@company.com"></div>
+<div class="fld"><label for="c-name">Contact name</label><input id="c-name" name="name" autocomplete="off" placeholder="Jordan Lee"></div>
+<div class="fld"><label for="c-company">Business</label><input id="c-company" name="company" autocomplete="off" placeholder="Bacon Roofing"></div>
+</div>
+<div>
+<table class="items"><thead><tr><th>Description</th><th class="q">Qty</th><th class="u">Unit price</th><th class="lt">Amount</th><th class="x"><span class="sr" hidden>Remove</span></th></tr></thead><tbody id="items"></tbody></table>
+<button class="add" type="button" id="add-line">+ Add line</button>
+</div>
+<div class="row3">
+<div class="fld"><label for="c-due">Due</label><select id="c-due" name="days_until_due"><option value="7">In 7 days</option><option value="14" selected>In 14 days</option><option value="30">In 30 days</option><option value="45">In 45 days</option><option value="60">In 60 days</option></select></div>
+<div class="fld" style="grid-column: span 2"><label for="c-memo">Note to client <span style="text-transform: none; letter-spacing: 0">(optional)</span></label><input id="c-memo" name="memo" maxlength="500" placeholder="e.g. November website refinements, per our proposal"></div>
+</div>
+<p class="err" id="new-err" role="alert" hidden></p>
+<div class="foot">
+<div class="total"><small>Total</small><span id="total">$0.00</span></div>
+<div class="btns"><button class="pill ghost" type="submit" data-send="false">Create, don’t email</button><button class="pill" type="submit" data-send="true">Create &amp; email invoice</button></div>
+</div>
+</form>
+<div class="created" id="created" hidden>
+<p class="ok" id="created-msg"></p>
+<div class="linkbox"><input id="created-link" readonly aria-label="Payment link"><button class="pill small" type="button" id="copy-created">Copy link</button></div>
+<div><button class="pill small ghost" type="button" id="another">Create another</button></div>
+</div>
+</section>
+
+<div class="filters" role="group" aria-label="Filter invoices">
+<button class="chip" type="button" data-f="" aria-pressed="true">All</button>
+<button class="chip" type="button" data-f="open" aria-pressed="false">Open</button>
+<button class="chip" type="button" data-f="paid" aria-pressed="false">Paid</button>
+<button class="chip" type="button" data-f="void" aria-pressed="false">Void</button>
+</div>
+<section class="card list" aria-label="Invoices">
+<table class="inv"><thead><tr><th>Invoice</th><th>Client</th><th class="num">Amount</th><th>Status</th><th>Due</th><th class="num"><span hidden>Actions</span></th></tr></thead><tbody id="rows"></tbody></table>
+<div class="empty" id="empty" hidden>No invoices yet.</div>
+<div class="empty" id="list-loading"><div class="dots" style="justify-content: center" aria-hidden="true"><span></span><span></span><span></span></div></div>
+</section>
+</div>
+
+</div>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var filter = '';
+  function money(c) { return (c / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' }); }
+  function date(sec) { return sec ? new Date(sec * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'; }
+  function toast(msg, bad) { var t = $('toast'); t.textContent = msg; t.className = 'toast on' + (bad ? ' bad' : ''); clearTimeout(t._h); t._h = setTimeout(function () { t.className = 'toast'; }, 3200); }
+  function api(method, path, body) {
+    return fetch(path, { method: method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin' })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) {
+          if (r.status === 401 && path !== '/api/admin/login') { showLogin(); throw new Error('Please sign in.'); }
+          if (!r.ok) throw new Error(d.error || 'Request failed');
+          return d;
+        });
+      });
+  }
+  function copy(text) {
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(function () { toast('Link copied'); }, function () { window.prompt('Copy this link:', text); });
+  }
+
+  // ---- auth ----
+  function showLogin(msg) { $('app').hidden = true; $('login').hidden = false; if (msg) { $('login-err').textContent = msg; $('login-err').hidden = false; } setTimeout(function () { $('pw').focus(); }, 50); }
+  function showApp() { $('login').hidden = true; $('app').hidden = false; load(); }
+  api('GET', '/api/admin/me').then(function (me) {
+    if (!me.configured) return showLogin('Admin isn’t set up yet. Add ADMIN_PASSWORD to the aethera-site service in Render.');
+    me.admin ? showApp() : showLogin();
+  }).catch(function () { showLogin('Couldn’t reach the server.'); });
+  $('login-form').addEventListener('submit', function (e) {
+    e.preventDefault(); $('login-err').hidden = true;
+    api('POST', '/api/admin/login', { password: $('pw').value }).then(function () { $('pw').value = ''; showApp(); })
+      .catch(function (er) { $('login-err').textContent = er.message; $('login-err').hidden = false; });
+  });
+  $('logout').addEventListener('click', function () { api('POST', '/api/admin/logout').then(function () { showLogin(); }); });
+
+  // ---- list ----
+  function statusOf(inv) {
+    if (inv.status === 'open' && inv.due_date && inv.due_date * 1000 < Date.now()) return ['overdue', 'Overdue'];
+    return [inv.status, { open: 'Open', paid: 'Paid', void: 'Void', draft: 'Draft', uncollectible: 'Uncollectible' }[inv.status] || inv.status];
+  }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function load() {
+    $('list-loading').hidden = false; $('empty').hidden = true;
+    api('GET', '/api/admin/invoices' + (filter ? '?status=' + filter : '')).then(function (d) {
+      $('mode').hidden = false; $('mode').textContent = d.testMode ? 'Test mode' : 'Live'; $('mode').className = 'mode' + (d.testMode ? '' : ' live');
+      var tb = $('rows'); tb.innerHTML = '';
+      d.invoices.forEach(function (inv) { tb.appendChild(rowFor(inv)); });
+      $('empty').hidden = d.invoices.length > 0; $('list-loading').hidden = true;
+    }).catch(function (er) { $('list-loading').hidden = true; toast(er.message, true); });
+  }
+  function rowFor(inv) {
+    var tr = el('tr'); tr.dataset.id = inv.id;
+    var no = el('td', 'no', inv.number || 'Draft');
+    no.appendChild(el('small', null, date(inv.created) + (inv.subscription ? ' · Partnership' : '')));
+    var who = el('td'); var w = el('div', 'who'); w.appendChild(el('span', null, inv.customer_name || inv.customer_email || '—')); if (inv.customer_name) w.appendChild(el('small', null, inv.customer_email)); who.appendChild(w);
+    var amt = el('td', 'num', money(inv.total));
+    var s = statusOf(inv); var st = el('td'); st.appendChild(el('span', 'badge ' + s[0], s[1]));
+    var due = el('td', null, inv.status === 'paid' ? 'Paid' : date(inv.due_date));
+    var acts = el('td', 'num c-acts'); var a = el('div', 'rowacts');
+    if (inv.pay_url) { var cp = el('button', null, 'Copy link'); cp.type = 'button'; cp.onclick = function () { copy(inv.pay_url); }; a.appendChild(cp); }
+    if (inv.status === 'open') {
+      var em = el('button', null, inv.emailed_at ? 'Resend' : 'Email'); em.type = 'button'; em.title = inv.emailed_at ? 'Last emailed ' + new Date(inv.emailed_at).toLocaleString() : 'Not emailed yet';
+      em.onclick = function () { act(inv, 'send', em); }; a.appendChild(em);
+      var mp = el('button', null, 'Mark paid'); mp.type = 'button'; mp.title = 'Paid by check or another way outside Stripe';
+      mp.onclick = function () { if (confirm('Mark ' + inv.number + ' as paid outside Stripe (check, cash, transfer)?')) act(inv, 'mark-paid', mp); }; a.appendChild(mp);
+      var vd = el('button', 'danger', 'Void'); vd.type = 'button';
+      vd.onclick = function () { if (confirm('Void ' + inv.number + '? The client will no longer be able to pay it. This can’t be undone.')) act(inv, 'void', vd); }; a.appendChild(vd);
+    }
+    var so = el('a', null, 'Stripe ↗'); so.href = inv.stripe_url; so.target = '_blank'; so.rel = 'noopener'; a.appendChild(so);
+    acts.appendChild(a);
+    [no, who, amt, st, due, acts].forEach(function (c) { tr.appendChild(c); });
+    return tr;
+  }
+  function act(inv, action, btn) {
+    btn.disabled = true;
+    api('POST', '/api/admin/invoices/' + inv.id + '/' + action).then(function (d) {
+      var msg = { send: d.emailed_via === 'stripe' ? 'Sent with Stripe’s email' : 'Invoice emailed to ' + inv.customer_email, void: 'Invoice voided', 'mark-paid': 'Marked as paid' }[action];
+      toast(msg); load();
+    }).catch(function (er) { btn.disabled = false; toast(er.message, true); });
+  }
+  document.querySelectorAll('.chip').forEach(function (c) {
+    c.addEventListener('click', function () {
+      filter = c.dataset.f;
+      document.querySelectorAll('.chip').forEach(function (x) { x.setAttribute('aria-pressed', String(x === c)); });
+      load();
+    });
+  });
+
+  // ---- new invoice ----
+  function addLine(desc, qty, price) {
+    var tr = el('tr');
+    tr.innerHTML = '<td><input class="d" maxlength="250" placeholder="Website refinements" aria-label="Description"></td>' +
+      '<td class="q"><input class="qv" type="number" min="1" max="999" step="1" value="1" inputmode="numeric" aria-label="Quantity"></td>' +
+      '<td class="u"><input class="uv" inputmode="decimal" placeholder="0.00" aria-label="Unit price in dollars"></td>' +
+      '<td class="lt">$0.00</td>' +
+      '<td class="x"><button class="icon-btn" type="button" aria-label="Remove line"><svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"></path></svg></button></td>';
+    if (desc) tr.querySelector('.d').value = desc;
+    if (qty) tr.querySelector('.qv').value = qty;
+    if (price) tr.querySelector('.uv').value = price;
+    tr.querySelector('button').onclick = function () { if ($('items').children.length > 1) { tr.remove(); recalc(); } };
+    $('items').appendChild(tr); recalc();
+    return tr;
+  }
+  function lines() {
+    return Array.prototype.map.call($('items').children, function (tr) {
+      return { description: tr.querySelector('.d').value.trim(), quantity: Number(tr.querySelector('.qv').value), unit_amount: tr.querySelector('.uv').value.replace(/[$,\s]/g, ''), tr: tr };
+    });
+  }
+  function recalc() {
+    var total = 0;
+    lines().forEach(function (l) {
+      var c = Math.round(Number(l.unit_amount) * 100) * (Number.isInteger(l.quantity) ? l.quantity : 0);
+      c = isFinite(c) ? c : 0; total += c; l.tr.querySelector('.lt').textContent = money(c);
+    });
+    $('total').textContent = money(total);
+  }
+  $('items').addEventListener('input', recalc);
+  $('add-line').onclick = function () { addLine().querySelector('.d').focus(); };
+  function resetForm() {
+    $('new-form').reset(); $('items').innerHTML = ''; addLine(); $('new-err').hidden = true;
+    $('new-form').hidden = false; $('created').hidden = true;
+  }
+  $('new-btn').onclick = function () { resetForm(); $('new').hidden = false; $('c-email').focus(); };
+  $('new-close').onclick = function () { $('new').hidden = true; };
+  $('another').onclick = function () { resetForm(); $('c-email').focus(); };
+  $('copy-created').onclick = function () { copy($('created-link').value); };
+
+  $('new-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var f = e.target.elements; var send = e.submitter ? e.submitter.dataset.send !== 'false' : true;
+    var items = lines().filter(function (l) { return l.description || l.unit_amount; });
+    $('new-err').hidden = true;
+    var problem = !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.value.trim()) ? 'Enter the client’s email address.'
+      : !f.name.value.trim() && !f.company.value.trim() ? 'Enter a contact name or business.'
+      : !items.length ? 'Add at least one line.'
+      : items.some(function (l) { return !l.description || !(Number(l.unit_amount) > 0) || !Number.isInteger(l.quantity) || l.quantity < 1; }) ? 'Each line needs a description, a quantity and a price.' : '';
+    if (problem) { $('new-err').textContent = problem; $('new-err').hidden = false; return; }
+    if (send && !confirm('Create invoice for ' + $('total').textContent + ' and email it to ' + f.email.value.trim() + '?')) return;
+    var btns = e.target.querySelectorAll('button[type=submit]'); btns.forEach(function (b) { b.disabled = true; });
+    api('POST', '/api/admin/invoices', {
+      email: f.email.value.trim(), name: f.name.value.trim(), company: f.company.value.trim(),
+      memo: f.memo.value.trim(), days_until_due: Number(f.days_until_due.value), send: send,
+      items: items.map(function (l) { return { description: l.description, quantity: l.quantity, unit_amount: l.unit_amount }; })
+    }).then(function (d) {
+      var inv = d.invoice;
+      var msg = 'Invoice ' + inv.number + ' for ' + money(inv.total) + ' created. ';
+      msg += d.email_error ? d.email_error : d.emailed_via === 'aethera' ? 'Emailed to ' + inv.customer_email + '.' : d.emailed_via === 'stripe' ? 'Emailed with Stripe’s invoice email (set up the Apps Script to send your branded email).' : 'Not emailed. Copy the link below to send it yourself.';
+      $('created-msg').textContent = msg; $('created-link').value = inv.pay_url || '';
+      $('new-form').hidden = true; $('created').hidden = false; load();
+    }).catch(function (er) { $('new-err').textContent = er.message; $('new-err').hidden = false; })
+      .then(function () { btns.forEach(function (b) { b.disabled = false; }); });
+  });
+})();
+</script>
+</body>
+</html>

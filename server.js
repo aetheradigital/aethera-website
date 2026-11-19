@@ -1,17 +1,24 @@
 'use strict';
 /**
  * aetheradigital.com web server.
- * Serves the static site from ./public and a small Stripe API for embedded checkout.
- * No dependencies: Node 20+ (built-in fetch).
+ * Serves the static site from ./public plus a small Stripe API:
+ *   - branded Payment Element checkout for invoices and the Startup Partnership
+ *   - an admin area (/admin) to create, send and void invoices
+ *   - the signed Stripe webhook (/api/stripe/webhook)
+ * No dependencies: Node 20+ (built-in fetch and crypto).
  *
  * Environment variables (set in Render, never in code):
- *   STRIPE_SECRET_KEY       sk_test_... / sk_live_... (or a restricted key with Checkout Sessions write)
+ *   STRIPE_SECRET_KEY       sk_test_... / sk_live_...
  *   STRIPE_PUBLISHABLE_KEY  pk_test_... / pk_live_...
- *   SITE_URL                public origin used for return URLs, e.g. https://aetheradigital.com
+ *   ADMIN_PASSWORD          password for /admin (admin is disabled until this is set; use 12+ characters)
+ *   SITE_URL                optional public origin used in emailed links, e.g. https://aetheradigital.com
+ *                           (when unset, links use the address the admin page was opened on)
  *   PRICE_PARTNERSHIP       Stripe Price ID for the $2,250/mo Startup Partnership
- *   PRODUCT_INVOICE         Stripe Product ID used for invoice payments
+ *   PORTAL_URL              Stripe customer portal login link
+ *   STRIPE_AUTOMATIC_TAX    "on" to turn on Stripe Tax for new invoices and subscriptions (needs Tax set up)
+ *   INVOICE_LINK_SECRET     optional key for signing invoice links (defaults to one derived from the secret key)
  *   STRIPE_WEBHOOK_SECRET   whsec_... signing secret of the webhook endpoint (/api/stripe/webhook)
- *   PAYMENTS_NOTIFY_URL     optional: Apps Script web app URL that logs payment events to a sheet and emails
+ *   PAYMENTS_NOTIFY_URL     optional: Apps Script web app URL (payments sheet, alerts and invoice emails)
  *   PAYMENTS_NOTIFY_TOKEN   optional: shared token checked by the Apps Script (PAYMENTS_TOKEN script property)
  */
 const http = require('http');
@@ -25,16 +32,22 @@ const STRIPE_API = process.env.STRIPE_API_BASE || 'https://api.stripe.com';
 const SECRET = process.env.STRIPE_SECRET_KEY || '';
 const PUBLISHABLE = process.env.STRIPE_PUBLISHABLE_KEY || '';
 const PRICE_PARTNERSHIP = process.env.PRICE_PARTNERSHIP || 'price_1UdHOkA3W4CrH9UBqqAxdgXg';
-const PRODUCT_INVOICE = process.env.PRODUCT_INVOICE || 'prod_VeaZ2Jq6eLp6HW';
 const PORTAL_URL = process.env.PORTAL_URL || 'https://billing.stripe.com/p/login/test_5kQ28qfmPgiGgFc9Mg7wA00';
 const SITE_URL = (process.env.SITE_URL || '').replace(/\/+$/, '');
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const AUTOMATIC_TAX = /^(on|true|1)$/i.test(process.env.STRIPE_AUTOMATIC_TAX || '');
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const NOTIFY_URL = process.env.PAYMENTS_NOTIFY_URL || '';
 const NOTIFY_TOKEN = process.env.PAYMENTS_NOTIFY_TOKEN || '';
 const WEBHOOK_TOLERANCE_SEC = 300; // reject signatures older than 5 minutes (replay protection)
 
-const MIN_CENTS = 5000;        // $50
-const MAX_CENTS = 5000000;     // $50,000
+const PAYMENT_METHOD_TYPES = ['card', 'us_bank_account'];
+const ADMIN_COOKIE = 'aethera_admin';
+const ADMIN_SESSION_SEC = 12 * 3600;
+const LINK_KEY = process.env.INVOICE_LINK_SECRET
+  ? Buffer.from(process.env.INVOICE_LINK_SECRET)
+  : crypto.createHmac('sha256', SECRET || 'unset').update('aethera-invoice-links').digest();
+const ADMIN_KEY = crypto.createHmac('sha256', ADMIN_PASSWORD || crypto.randomBytes(32)).update('aethera-admin-session:' + SECRET).digest();
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -55,8 +68,8 @@ function send(res, status, body, headers) {
   res.writeHead(status, Object.assign({}, SECURITY_HEADERS, headers || {}));
   res.end(body);
 }
-function json(res, status, obj) {
-  send(res, status, JSON.stringify(obj), { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+function json(res, status, obj, headers) {
+  send(res, status, JSON.stringify(obj), Object.assign({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }, headers || {}));
 }
 
 // Encode nested objects/arrays the way Stripe's form API expects: a[b][0][c]=d
@@ -86,13 +99,14 @@ async function stripe(method, pathname, params) {
     headers: { Authorization: 'Bearer ' + SECRET, 'Content-Type': 'application/x-www-form-urlencoded' }
   };
   let url = STRIPE_API + pathname;
-  if (method === 'GET' && params) url += '?' + encodeForm(params);
+  if ((method === 'GET' || method === 'DELETE') && params) url += '?' + encodeForm(params);
   else if (params) opts.body = encodeForm(params);
   const r = await fetch(url, opts);
   const data = await r.json().catch(function () { return {}; });
   if (!r.ok) {
     const err = new Error((data.error && data.error.message) || ('Stripe error ' + r.status));
     err.status = r.status;
+    err.stripe = true;
     throw err;
   }
   return data;
@@ -113,7 +127,11 @@ function readRaw(req, limit) {
 async function readBody(req, limit) {
   return (await readRaw(req, limit)).toString('utf8');
 }
+async function readJson(req, limit) {
+  try { return JSON.parse((await readBody(req, limit)) || '{}') || {}; } catch (e) { return null; }
+}
 
+// Origin used for links we email. SITE_URL wins; otherwise the address this request came in on.
 function originOf(req) {
   if (SITE_URL) return SITE_URL;
   const proto = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
@@ -127,118 +145,392 @@ function sameOrigin(req) {
   try { return new URL(o).host === req.headers.host; } catch (e) { return false; }
 }
 
-// Tiny in-memory rate limiter: N requests per minute per IP.
+// Tiny in-memory rate limiter: N requests per minute per IP and bucket.
 const hits = new Map();
-function limited(req, max) {
+function limited(req, max, bucket) {
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const key = (bucket || 'api') + ':' + ip;
   const now = Date.now(); const windowStart = now - 60000;
-  const list = (hits.get(ip) || []).filter(function (t) { return t > windowStart; });
-  list.push(now); hits.set(ip, list);
+  const list = (hits.get(key) || []).filter(function (t) { return t > windowStart; });
+  list.push(now); hits.set(key, list);
   if (hits.size > 5000) hits.clear();
   return list.length > max;
 }
 
-// ---------- API ----------
-async function createCheckout(req, res) {
-  if (!SECRET || !PUBLISHABLE) return json(res, 503, { error: 'Payments are not configured yet.' });
-  if (!sameOrigin(req)) return json(res, 403, { error: 'Forbidden' });
-  if (limited(req, 20)) return json(res, 429, { error: 'Too many requests. Please wait a minute.' });
+function safeEqual(a, b) {
+  const x = Buffer.from(String(a)); const y = Buffer.from(String(b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+function clip(v, n) { return String(v == null ? '' : v).trim().slice(0, n); }
+const EMAIL_RE = /^[^@\s<>"]+@[^@\s<>"]+\.[A-Za-z]{2,}$/;
+const INVOICE_ID_RE = /^in_[A-Za-z0-9]{8,64}$/;
 
-  let body;
-  try { body = JSON.parse(await readBody(req, 4096) || '{}'); } catch (e) { return json(res, 400, { error: 'Invalid request.' }); }
-
-  const returnUrl = originOf(req) + '/pay/complete/?session_id={CHECKOUT_SESSION_ID}';
-  const common = {
-    ui_mode: 'embedded_page',
-    return_url: returnUrl,
-    // Payment methods come from the Dashboard (enable ACH Direct Debit there). Consumer pay-later options don't fit B2B retainers.
-    excluded_payment_method_types: ['klarna', 'affirm', 'afterpay_clearpay', 'zip', 'cashapp', 'amazon_pay'],
-    billing_address_collection: 'required',
-    integration_identifier: 'aethera_pay_page'
-  };
-  let params;
-
-  if (body.plan === 'partnership') {
-    params = Object.assign({}, common, {
-      mode: 'subscription',
-      line_items: [{ price: PRICE_PARTNERSHIP, quantity: 1 }],
-      name_collection: { business: { enabled: true, optional: false } },
-      tax_id_collection: { enabled: true },
-      subscription_data: { description: 'Aethera Digital Startup Partnership (month-to-month)', metadata: { plan: 'startup_partnership' } },
-      custom_text: { submit: { message: 'Billed monthly until you cancel. Paying by US bank account (ACH) is preferred. Manage or cancel anytime from the billing portal.' } },
-      metadata: { source: 'aethera_pay_page', plan: 'startup_partnership' }
-    });
-  } else if (body.plan === 'invoice') {
-    const cents = Math.round(Number(body.amount) * 100);
-    const inv = String(body.invoice_number || '').trim();
-    if (!Number.isFinite(cents) || cents < MIN_CENTS || cents > MAX_CENTS) {
-      return json(res, 400, { error: 'Enter an amount between $50 and $50,000.' });
-    }
-    if (!/^[A-Za-z0-9#._\- ]{1,40}$/.test(inv)) {
-      return json(res, 400, { error: 'Enter your invoice number (letters, numbers and dashes).' });
-    }
-    params = Object.assign({}, common, {
-      mode: 'payment',
-      submit_type: 'pay',
-      customer_creation: 'always',
-      line_items: [{
-        quantity: 1,
-        price_data: { currency: 'usd', product: PRODUCT_INVOICE, unit_amount: cents, tax_behavior: 'exclusive' }
-      }],
-      name_collection: { business: { enabled: true, optional: true } },
-      payment_intent_data: { description: 'Aethera Digital invoice ' + inv, metadata: { invoice_number: inv } },
-      invoice_creation: {
-        enabled: true,
-        invoice_data: {
-          description: 'Payment for invoice ' + inv + '. Thank you for working with Aethera Digital.',
-          footer: 'Aethera Digital · aetheradigital.com · hello@aetheradigital.com',
-          metadata: { invoice_number: inv, source: 'aethera_pay_page' }
-        }
-      },
-      metadata: { source: 'aethera_pay_page', invoice_number: inv }
-    });
-  } else {
-    return json(res, 400, { error: 'Unknown payment option.' });
-  }
-
-  try {
-    const session = await stripe('POST', '/v1/checkout/sessions', params);
-    return json(res, 200, { clientSecret: session.client_secret });
-  } catch (e) {
-    console.error('checkout_session_failed', e.status, e.message);
-    return json(res, 502, { error: 'We could not start checkout. Please try again or email hello@aetheradigital.com.' });
-  }
+// ---------- signed invoice links ----------
+// Anyone with the link can view and pay that one invoice (same model as Stripe's hosted invoice links),
+// but links can't be guessed or altered.
+function invoiceSig(id) {
+  return crypto.createHmac('sha256', LINK_KEY).update('invoice:' + id).digest('base64url').slice(0, 32);
+}
+function invoicePath(id) {
+  return '/pay/invoice/?i=' + encodeURIComponent(id) + '&k=' + invoiceSig(id);
+}
+function validInvoiceLink(id, k) {
+  return INVOICE_ID_RE.test(id || '') && typeof k === 'string' && safeEqual(k, invoiceSig(id));
 }
 
-async function sessionStatus(req, res, url) {
-  if (!SECRET) return json(res, 503, { error: 'Payments are not configured yet.' });
-  if (limited(req, 60)) return json(res, 429, { error: 'Too many requests.' });
-  const id = url.searchParams.get('session_id') || '';
-  if (!/^cs_(test|live)_[A-Za-z0-9]{10,200}$/.test(id)) return json(res, 400, { error: 'Invalid session.' });
-  try {
-    const s = await stripe('GET', '/v1/checkout/sessions/' + encodeURIComponent(id));
-    return json(res, 200, {
-      status: s.status,
-      payment_status: s.payment_status,
-      mode: s.mode,
-      amount_total: s.amount_total,
-      currency: s.currency,
-      customer_email: (s.customer_details && s.customer_details.email) || null,
-      invoice_number: (s.metadata && s.metadata.invoice_number) || null
-    });
-  } catch (e) {
-    console.error('session_status_failed', e.status, e.message);
-    return json(res, 502, { error: 'Could not load payment status.' });
-  }
+function money(cents, currency) {
+  if (typeof cents !== 'number') return '';
+  const s = (cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (String(currency || 'usd').toLowerCase() === 'usd' ? '$' + s : s + ' ' + String(currency).toUpperCase());
+}
+function dateText(sec) {
+  if (!sec) return '';
+  return new Date(sec * 1000).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
 }
 
+// ---------- public payment API ----------
 function config(req, res) {
   json(res, 200, {
     enabled: Boolean(SECRET && PUBLISHABLE),
     publishableKey: PUBLISHABLE || null,
     testMode: /^pk_test_/.test(PUBLISHABLE),
-    portalUrl: PORTAL_URL
+    portalUrl: PORTAL_URL,
+    paymentMethodTypes: PAYMENT_METHOD_TYPES
   });
+}
+
+async function invoiceLines(inv) {
+  if (!inv.lines) return [];
+  let lines = inv.lines.data || [];
+  if (inv.lines.has_more) {
+    const all = await stripe('GET', '/v1/invoices/' + encodeURIComponent(inv.id) + '/lines', { limit: 100 });
+    lines = all.data || lines;
+  }
+  return lines.map(function (l) {
+    return { description: l.description || '', quantity: l.quantity || 1, amount: l.amount };
+  });
+}
+
+// The fields a client may see. Never the customer id, metadata or internal notes.
+async function publicInvoice(inv) {
+  const payable = inv.status === 'open' && inv.amount_remaining > 0 && inv.confirmation_secret && inv.confirmation_secret.client_secret;
+  return {
+    number: inv.number || '',
+    status: inv.status,
+    currency: inv.currency,
+    subtotal: inv.subtotal,
+    tax: typeof inv.total_excluding_tax === 'number' ? inv.total - inv.total_excluding_tax : 0,
+    total: inv.total,
+    amount_paid: inv.amount_paid,
+    amount_remaining: inv.amount_remaining,
+    issued: dateText(inv.effective_at || inv.created),
+    due: dateText(inv.due_date),
+    customer_name: inv.customer_name || '',
+    customer_email: inv.customer_email || '',
+    memo: inv.description || '',
+    lines: await invoiceLines(inv),
+    pdf: inv.invoice_pdf || null,
+    clientSecret: payable ? inv.confirmation_secret.client_secret : null
+  };
+}
+
+async function getInvoice(req, res, url) {
+  if (!SECRET) return json(res, 503, { error: 'Payments are not configured yet.' });
+  if (limited(req, 60, 'invoice')) return json(res, 429, { error: 'Too many requests. Please wait a minute.' });
+  const id = url.searchParams.get('i') || ''; const k = url.searchParams.get('k') || '';
+  if (!validInvoiceLink(id, k)) return json(res, 404, { error: 'We couldn’t find that invoice. Check the link in your email.' });
+  try {
+    const inv = await stripe('GET', '/v1/invoices/' + encodeURIComponent(id), { expand: ['confirmation_secret'] });
+    if (inv.status === 'draft') return json(res, 404, { error: 'This invoice isn’t ready yet.' });
+    return json(res, 200, await publicInvoice(inv));
+  } catch (e) {
+    console.error('invoice_get_failed', e.status, e.message);
+    return json(res, e.status === 404 ? 404 : 502, { error: e.status === 404 ? 'We couldn’t find that invoice.' : 'We couldn’t load your invoice. Please try again.' });
+  }
+}
+
+async function lookupInvoice(req, res) {
+  if (!SECRET) return json(res, 503, { error: 'Payments are not configured yet.' });
+  if (!sameOrigin(req)) return json(res, 403, { error: 'Forbidden' });
+  if (limited(req, 10, 'lookup')) return json(res, 429, { error: 'Too many attempts. Please wait a minute and try again.' });
+  const body = await readJson(req, 2048);
+  if (!body) return json(res, 400, { error: 'Invalid request.' });
+  const number = clip(body.number, 40).toUpperCase();
+  const email = clip(body.email, 200).toLowerCase();
+  if (!/^[A-Z0-9][A-Z0-9-]{2,39}$/.test(number)) return json(res, 400, { error: 'Enter the invoice number exactly as it appears on your invoice.' });
+  if (!EMAIL_RE.test(email)) return json(res, 400, { error: 'Enter the email address the invoice was sent to.' });
+  const notFound = { error: 'We couldn’t find an invoice with that number and email. Check both, or email hello@aetheradigital.com.' };
+  try {
+    const found = await stripe('GET', '/v1/invoices/search', { query: 'number:"' + number + '"', limit: 5 });
+    const inv = (found.data || []).find(function (x) {
+      return x.status !== 'draft' && String(x.number || '').toUpperCase() === number && String(x.customer_email || '').toLowerCase() === email;
+    });
+    if (!inv) return json(res, 404, notFound);
+    return json(res, 200, { url: invoicePath(inv.id) });
+  } catch (e) {
+    console.error('invoice_lookup_failed', e.status, e.message);
+    return json(res, 502, { error: 'Lookup isn’t available right now. Please use the link in your invoice email.' });
+  }
+}
+
+async function findOrCreateCustomer(email, name, company, source) {
+  const existing = await stripe('GET', '/v1/customers', { email: email, limit: 1 });
+  if (existing.data && existing.data[0]) return existing.data[0];
+  return stripe('POST', '/v1/customers', {
+    email: email,
+    name: company || name || undefined,
+    metadata: { contact_name: name || '', company: company || '', source: source }
+  });
+}
+
+async function subscribe(req, res) {
+  if (!SECRET || !PUBLISHABLE) return json(res, 503, { error: 'Payments are not configured yet.' });
+  if (!sameOrigin(req)) return json(res, 403, { error: 'Forbidden' });
+  if (limited(req, 8, 'subscribe')) return json(res, 429, { error: 'Too many attempts. Please wait a minute.' });
+  const body = await readJson(req, 4096);
+  if (!body) return json(res, 400, { error: 'Invalid request.' });
+  const email = clip(body.email, 200).toLowerCase();
+  const name = clip(body.name, 120);
+  const company = clip(body.company, 120);
+  if (!EMAIL_RE.test(email)) return json(res, 400, { error: 'Enter a valid email address.', field: 'email' });
+  if (!name) return json(res, 400, { error: 'Enter your name.', field: 'name' });
+  if (!company) return json(res, 400, { error: 'Enter your business name.', field: 'company' });
+  try {
+    const customer = await findOrCreateCustomer(email, name, company, 'aethera_partnership');
+    const sub = await stripe('POST', '/v1/subscriptions', {
+      customer: customer.id,
+      items: [{ price: PRICE_PARTNERSHIP, quantity: 1 }],
+      payment_behavior: 'default_incomplete',
+      payment_settings: { payment_method_types: PAYMENT_METHOD_TYPES, save_default_payment_method: 'on_subscription' },
+      automatic_tax: AUTOMATIC_TAX ? { enabled: true } : undefined,
+      description: 'Aethera Digital Startup Partnership (month-to-month)',
+      metadata: { plan: 'startup_partnership', source: 'aethera_pay_page', contact_name: name, company: company },
+      expand: ['latest_invoice.confirmation_secret']
+    });
+    const cs = sub.latest_invoice && sub.latest_invoice.confirmation_secret;
+    if (!cs || !cs.client_secret) throw new Error('No confirmation secret on first invoice');
+    return json(res, 200, { clientSecret: cs.client_secret });
+  } catch (e) {
+    console.error('subscribe_failed', e.status, e.message);
+    return json(res, 502, { error: 'We couldn’t start your partnership checkout. Please try again or email hello@aetheradigital.com.' });
+  }
+}
+
+// ---------- admin ----------
+function parseCookies(req) {
+  const out = {};
+  String(req.headers.cookie || '').split(';').forEach(function (p) {
+    const i = p.indexOf('=');
+    if (i > 0) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim());
+  });
+  return out;
+}
+function sessionSig(exp) { return crypto.createHmac('sha256', ADMIN_KEY).update('s:' + exp).digest('base64url'); }
+function isAdmin(req) {
+  if (!ADMIN_PASSWORD) return false;
+  const v = parseCookies(req)[ADMIN_COOKIE] || '';
+  const dot = v.indexOf('.');
+  if (dot < 1) return false;
+  const exp = v.slice(0, dot);
+  if (!/^\d+$/.test(exp) || Number(exp) < Math.floor(Date.now() / 1000)) return false;
+  return safeEqual(v.slice(dot + 1), sessionSig(exp));
+}
+function adminCookie(req, value, maxAge) {
+  const secure = SITE_URL.startsWith('https:') || /https/.test(String(req.headers['x-forwarded-proto'] || ''));
+  return ADMIN_COOKIE + '=' + encodeURIComponent(value) + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=' + maxAge + (secure ? '; Secure' : '');
+}
+
+async function adminLogin(req, res) {
+  if (!ADMIN_PASSWORD) return json(res, 503, { error: 'Admin is not set up yet. Add ADMIN_PASSWORD in Render.' });
+  if (!sameOrigin(req)) return json(res, 403, { error: 'Forbidden' });
+  if (limited(req, 8, 'login')) return json(res, 429, { error: 'Too many attempts. Wait a minute and try again.' });
+  const body = await readJson(req, 1024);
+  const pass = body && typeof body.password === 'string' ? body.password : '';
+  const a = crypto.createHash('sha256').update(pass).digest('hex');
+  const b = crypto.createHash('sha256').update(ADMIN_PASSWORD).digest('hex');
+  if (!safeEqual(a, b)) {
+    console.warn('admin_login_failed');
+    return json(res, 401, { error: 'That password isn’t right.' });
+  }
+  const exp = String(Math.floor(Date.now() / 1000) + ADMIN_SESSION_SEC);
+  return json(res, 200, { ok: true }, { 'Set-Cookie': adminCookie(req, exp + '.' + sessionSig(exp), ADMIN_SESSION_SEC) });
+}
+function adminLogout(req, res) {
+  return json(res, 200, { ok: true }, { 'Set-Cookie': adminCookie(req, '', 0) });
+}
+
+function adminRow(inv, origin) {
+  const md = inv.metadata || {};
+  return {
+    id: inv.id,
+    number: inv.number || '',
+    status: inv.status,
+    customer_name: inv.customer_name || '',
+    customer_email: inv.customer_email || '',
+    total: inv.total,
+    amount_remaining: inv.amount_remaining,
+    currency: inv.currency,
+    created: inv.created,
+    due_date: inv.due_date,
+    subscription: Boolean(inv.parent && inv.parent.subscription_details),
+    emailed_at: md.emailed_at || '',
+    pay_url: inv.status === 'open' || inv.status === 'paid' ? origin + invoicePath(inv.id) : null,
+    stripe_url: 'https://dashboard.stripe.com/' + (inv.livemode ? '' : 'test/') + 'invoices/' + inv.id
+  };
+}
+
+async function adminList(req, res, url) {
+  const params = { limit: 50 };
+  const st = url.searchParams.get('status');
+  if (['draft', 'open', 'paid', 'void', 'uncollectible'].indexOf(st) >= 0) params.status = st;
+  const list = await stripe('GET', '/v1/invoices', params);
+  const origin = originOf(req);
+  return json(res, 200, { invoices: (list.data || []).map(function (inv) { return adminRow(inv, origin); }), testMode: /^sk_test_|^rk_test_/.test(SECRET) });
+}
+
+async function sendInvoiceEmail(inv, origin) {
+  const url = origin + invoicePath(inv.id);
+  if (NOTIFY_URL) {
+    const body = new URLSearchParams({
+      kind: 'invoice_email', token: NOTIFY_TOKEN,
+      to: inv.customer_email || '', name: inv.customer_name || '', number: inv.number || '',
+      amount: money(inv.amount_remaining, inv.currency), due: dateText(inv.due_date), memo: inv.description || '',
+      url: url, livemode: String(Boolean(inv.livemode))
+    });
+    const r = await fetch(NOTIFY_URL, {
+      method: 'POST', body: body, redirect: 'follow',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(10000)
+    });
+    const out = await r.json().catch(function () { return {}; });
+    if (!r.ok || out.ok !== true) throw new Error('invoice email failed: ' + r.status + ' ' + (out.error || ''));
+    await stripe('POST', '/v1/invoices/' + inv.id, { metadata: { emailed_at: new Date().toISOString(), emailed_via: 'aethera' } });
+    return 'aethera';
+  }
+  // No Apps Script configured: fall back to Stripe's own invoice email (links to Stripe's hosted page).
+  await stripe('POST', '/v1/invoices/' + inv.id + '/send');
+  await stripe('POST', '/v1/invoices/' + inv.id, { metadata: { emailed_at: new Date().toISOString(), emailed_via: 'stripe' } });
+  return 'stripe';
+}
+
+function parseItems(items) {
+  if (!Array.isArray(items) || items.length < 1 || items.length > 25) return null;
+  const out = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i] || {};
+    const description = clip(it.description, 250);
+    const quantity = Number(it.quantity);
+    const cents = Math.round(Number(String(it.unit_amount).replace(/[$,\s]/g, '')) * 100);
+    if (!description || !Number.isInteger(quantity) || quantity < 1 || quantity > 999) return null;
+    if (!Number.isFinite(cents) || cents < 1 || cents > 10000000) return null;
+    out.push({ description: description, quantity: quantity, cents: cents });
+  }
+  return out;
+}
+
+async function adminCreate(req, res) {
+  const body = await readJson(req, 32768);
+  if (!body) return json(res, 400, { error: 'Invalid request.' });
+  const email = clip(body.email, 200).toLowerCase();
+  const name = clip(body.name, 120);
+  const company = clip(body.company, 120);
+  const memo = clip(body.memo, 500);
+  const days = Number(body.days_until_due);
+  const items = parseItems(body.items);
+  if (!EMAIL_RE.test(email)) return json(res, 400, { error: 'Enter the client’s email address.', field: 'email' });
+  if (!name && !company) return json(res, 400, { error: 'Enter a client or business name.', field: 'name' });
+  if (!items) return json(res, 400, { error: 'Each line needs a description, a whole-number quantity and a price.', field: 'items' });
+  if (!Number.isInteger(days) || days < 1 || days > 90) return json(res, 400, { error: 'Choose when the invoice is due.', field: 'days_until_due' });
+  const total = items.reduce(function (s, it) { return s + it.cents * it.quantity; }, 0);
+  if (total < 50) return json(res, 400, { error: 'The invoice total must be at least $0.50.', field: 'items' });
+
+  let invoice = null;
+  try {
+    const customer = await findOrCreateCustomer(email, name, company, 'aethera_admin');
+    invoice = await stripe('POST', '/v1/invoices', {
+      customer: customer.id,
+      collection_method: 'send_invoice',
+      days_until_due: days,
+      auto_advance: false,
+      pending_invoice_items_behavior: 'exclude',
+      description: memo || undefined,
+      footer: 'Aethera Digital · aetheradigital.com · hello@aetheradigital.com',
+      payment_settings: { payment_method_types: PAYMENT_METHOD_TYPES },
+      automatic_tax: AUTOMATIC_TAX ? { enabled: true } : undefined,
+      metadata: { source: 'aethera_admin', contact_name: name, company: company }
+    });
+    for (const it of items) {
+      await stripe('POST', '/v1/invoiceitems', {
+        customer: customer.id, invoice: invoice.id, currency: 'usd',
+        description: it.description, quantity: it.quantity, unit_amount_decimal: String(it.cents)
+      });
+    }
+    invoice = await stripe('POST', '/v1/invoices/' + invoice.id + '/finalize', { auto_advance: false });
+  } catch (e) {
+    console.error('admin_invoice_create_failed', e.status, e.message);
+    if (invoice && invoice.status === 'draft') {
+      await stripe('DELETE', '/v1/invoices/' + invoice.id).catch(function () {});
+    }
+    return json(res, 502, { error: 'Stripe couldn’t create the invoice: ' + e.message });
+  }
+
+  const origin = originOf(req);
+  let emailedVia = null; let emailError = null;
+  if (body.send !== false) {
+    try { emailedVia = await sendInvoiceEmail(invoice, origin); } catch (e) {
+      console.error('admin_invoice_email_failed', e.message);
+      emailError = 'The invoice was created, but the email didn’t send. Use Resend or copy the link.';
+    }
+  }
+  console.log('admin_invoice_created ' + JSON.stringify({ id: invoice.id, number: invoice.number, total: invoice.total, emailed: emailedVia }));
+  return json(res, 200, { invoice: adminRow(invoice, origin), emailed_via: emailedVia, email_error: emailError });
+}
+
+async function adminAction(req, res, id, action) {
+  if (!INVOICE_ID_RE.test(id)) return json(res, 400, { error: 'Invalid invoice.' });
+  const origin = originOf(req);
+  try {
+    let inv = await stripe('GET', '/v1/invoices/' + id);
+    if (action === 'send') {
+      if (inv.status !== 'open') return json(res, 400, { error: 'Only open invoices can be emailed.' });
+      const via = await sendInvoiceEmail(inv, origin);
+      inv = await stripe('GET', '/v1/invoices/' + id);
+      return json(res, 200, { invoice: adminRow(inv, origin), emailed_via: via });
+    }
+    if (action === 'void') {
+      if (inv.status !== 'open') return json(res, 400, { error: 'Only open invoices can be voided.' });
+      inv = await stripe('POST', '/v1/invoices/' + id + '/void');
+      return json(res, 200, { invoice: adminRow(inv, origin) });
+    }
+    if (action === 'mark-paid') {
+      if (inv.status !== 'open') return json(res, 400, { error: 'Only open invoices can be marked paid.' });
+      inv = await stripe('POST', '/v1/invoices/' + id + '/pay', { paid_out_of_band: true });
+      return json(res, 200, { invoice: adminRow(inv, origin) });
+    }
+    return json(res, 404, { error: 'Not found' });
+  } catch (e) {
+    console.error('admin_invoice_action_failed', action, e.status, e.message);
+    return json(res, 502, { error: e.stripe ? 'Stripe: ' + e.message : 'That didn’t work. Please try again.' });
+  }
+}
+
+async function adminApi(req, res, url) {
+  const p = url.pathname;
+  if (p === '/api/admin/login' && req.method === 'POST') return adminLogin(req, res);
+  if (p === '/api/admin/logout' && req.method === 'POST') return adminLogout(req, res);
+  if (p === '/api/admin/me' && req.method === 'GET') return json(res, 200, { admin: isAdmin(req), configured: Boolean(ADMIN_PASSWORD), payments: Boolean(SECRET) });
+  if (!isAdmin(req)) return json(res, 401, { error: 'Please sign in.' });
+  if (req.method !== 'GET' && !sameOrigin(req)) return json(res, 403, { error: 'Forbidden' });
+  if (!SECRET) return json(res, 503, { error: 'Stripe keys are not configured.' });
+  if (p === '/api/admin/invoices' && req.method === 'GET') {
+    try { return await adminList(req, res, url); } catch (e) {
+      console.error('admin_list_failed', e.status, e.message);
+      return json(res, 502, { error: 'Couldn’t load invoices from Stripe.' });
+    }
+  }
+  if (p === '/api/admin/invoices' && req.method === 'POST') return adminCreate(req, res);
+  const m = p.match(/^\/api\/admin\/invoices\/([^/]+)\/(send|void|mark-paid)$/);
+  if (m && req.method === 'POST') return adminAction(req, res, m[1], m[2]);
+  return json(res, 404, { error: 'Not found' });
 }
 
 // ---------- Stripe webhook ----------
@@ -261,12 +553,6 @@ function verifyStripeSignature(raw, header, secret, nowSec) {
     const b = Buffer.from(s, 'utf8');
     return b.length === expected.length && crypto.timingSafeEqual(b, expected);
   });
-}
-
-function money(cents, currency) {
-  if (typeof cents !== 'number') return '';
-  const s = (cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return (String(currency || 'usd').toLowerCase() === 'usd' ? '$' + s : s + ' ' + String(currency).toUpperCase());
 }
 
 // Turn the events we care about into one flat record for logging and the payments sheet. Others return null.
@@ -300,8 +586,9 @@ function summarizeEvent(event) {
       if (md.source === 'aethera_pay_page') return null;
       const paid = event.type === 'invoice.paid';
       const renewal = o.billing_reason === 'subscription_cycle';
+      const firstSub = o.billing_reason === 'subscription_create';
       return Object.assign(base, {
-        label: paid ? (renewal ? 'Monthly renewal paid' : 'Invoice paid') : (renewal ? 'Monthly renewal failed' : 'Invoice payment failed'),
+        label: paid ? (renewal ? 'Monthly renewal paid' : firstSub ? 'Partnership started (first payment)' : 'Invoice paid') : (renewal ? 'Monthly renewal failed' : firstSub ? 'Partnership first payment failed' : 'Invoice payment failed'),
         status: paid ? 'paid' : 'failed',
         amount: money(paid ? o.amount_paid : o.amount_due, o.currency),
         name: o.customer_name || '', email: o.customer_email || '',
@@ -404,12 +691,15 @@ const server = http.createServer(async function (req, res) {
   let url;
   try { url = new URL(req.url, 'http://localhost'); } catch (e) { return send(res, 400, 'Bad request'); }
   try {
-    if (url.pathname === '/api/config' && req.method === 'GET') return config(req, res);
-    if (url.pathname === '/api/checkout' && req.method === 'POST') return await createCheckout(req, res);
-    if (url.pathname === '/api/session-status' && req.method === 'GET') return await sessionStatus(req, res, url);
-    if (url.pathname === '/api/stripe/webhook' && req.method === 'POST') return await stripeWebhook(req, res);
-    if (url.pathname === '/healthz') return send(res, 200, 'ok', { 'Content-Type': 'text/plain' });
-    if (url.pathname.startsWith('/api/')) return json(res, 404, { error: 'Not found' });
+    const p = url.pathname;
+    if (p === '/api/config' && req.method === 'GET') return config(req, res);
+    if (p === '/api/invoice' && req.method === 'GET') return await getInvoice(req, res, url);
+    if (p === '/api/invoice-lookup' && req.method === 'POST') return await lookupInvoice(req, res);
+    if (p === '/api/subscribe' && req.method === 'POST') return await subscribe(req, res);
+    if (p === '/api/stripe/webhook' && req.method === 'POST') return await stripeWebhook(req, res);
+    if (p.startsWith('/api/admin/')) return await adminApi(req, res, url);
+    if (p === '/healthz') return send(res, 200, 'ok', { 'Content-Type': 'text/plain' });
+    if (p.startsWith('/api/')) return json(res, 404, { error: 'Not found' });
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });
     return serveStatic(req, res, url);
   } catch (e) {
@@ -419,6 +709,8 @@ const server = http.createServer(async function (req, res) {
 });
 
 if (require.main === module) {
-  server.listen(PORT, function () { console.log('aethera site listening on ' + PORT + (SECRET ? '' : ' (Stripe not configured)')); });
+  server.listen(PORT, function () {
+    console.log('aethera site listening on ' + PORT + (SECRET ? '' : ' (Stripe not configured)') + (ADMIN_PASSWORD ? '' : ' (admin disabled: set ADMIN_PASSWORD)'));
+  });
 }
-module.exports = { server, encodeForm, verifyStripeSignature, summarizeEvent };
+module.exports = { server, encodeForm, verifyStripeSignature, summarizeEvent, invoiceSig, parseItems };

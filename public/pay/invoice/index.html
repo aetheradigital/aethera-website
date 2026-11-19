@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invoice — Aethera Digital</title>
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#000000">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,200;0,300;0,400;0,600;1,300&amp;family=Nunito+Sans:wght@400;600;700&amp;display=swap">
+<link rel="stylesheet" href="/assets/pay.css">
+<script src="https://js.stripe.com/endive/stripe.js"></script>
+<style>
+.grid{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:24px;align-items:start}
+.sum h1{font-size:clamp(44px,6vw,72px);font-weight:200;letter-spacing:-.04em;margin-top:14px}
+.sum .due{margin:10px 0 0;color:#D6D6DC}
+.meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin:32px 0 0;padding:24px 0 0;border-top:1px solid var(--line)}
+.meta dt{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--mute);font-weight:600}
+.meta dd{margin:6px 0 0;font-size:16px;word-break:break-word}
+.lines{width:100%;border-collapse:collapse;margin:32px 0 0;font-size:16px}
+.lines th{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--mute);font-weight:600;text-align:left;padding:0 0 12px;border-bottom:1px solid var(--line)}
+.lines td{padding:16px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.lines .num{text-align:right;white-space:nowrap;padding-left:16px}
+.lines .qty{color:var(--mute);font-size:14px;margin-top:2px}
+.totals{margin:18px 0 0 auto;max-width:320px;display:grid;grid-template-columns:1fr auto;gap:8px 24px;font-size:16px}
+.totals dt{color:var(--mute)}.totals dd{margin:0;text-align:right}
+.totals .grand{font-size:20px;color:#fff;padding-top:10px;border-top:1px solid var(--line);font-weight:600}
+.memo{margin:28px 0 0;padding:18px 20px;border-radius:16px;background:#121217;color:#D6D6DC;font-size:15px;white-space:pre-line}
+.pdf{display:inline-flex;align-items:center;gap:8px;margin:24px 0 0;font-size:15px;text-decoration:none}
+.payc{position:sticky;top:24px}
+.payc h2{font-size:30px;font-weight:300}
+.payc .sub{margin:8px 0 24px;color:var(--mute);font-size:15px}
+.payc form{display:flex;flex-direction:column;gap:18px}
+.state{text-align:left}
+.state .icon{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#000;margin-bottom:18px}
+.state h2{font-size:30px}
+.state p{color:#D6D6DC;margin:12px 0 0}
+.center{max-width:620px;margin:40px auto 0}
+@media (max-width:960px){.grid{grid-template-columns:minmax(0,1fr)}.payc{position:static}}
+@media (max-width:560px){.meta{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+</style>
+</head>
+<body>
+<div class="testbar" hidden>Test mode · no real charges</div>
+<header class="topbar"><a class="logo" href="/" aria-label="Aethera Digital home"><img src="/assets/icon.png" alt="" width="34" height="34"></a><a class="back" href="/pay/">Client payments</a></header>
+<main class="stage">
+<div class="orb" style="background: #C8B6FF; left: -6%; top: -8%" aria-hidden="true"></div>
+<div class="orb" style="background: #FFC4A8; right: -4%; top: 30%" aria-hidden="true"></div>
+<div class="inner">
+
+<section class="card center" id="loading" aria-live="polite">
+<p class="eyebrow">Invoice</p>
+<h2 style="font-size: 36px; margin-top: 14px">Loading your invoice…</h2>
+<div class="dots" style="margin-top: 24px" aria-hidden="true"><span></span><span></span><span></span></div>
+</section>
+
+<section class="card center state" id="missing" hidden>
+<p class="eyebrow">Invoice</p>
+<h2 style="margin-top: 14px">We couldn’t find <em>that invoice.</em></h2>
+<p id="missing-msg">The link may be incomplete. Try the button in your invoice email again, or look it up with your invoice number.</p>
+<div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 28px"><a class="pill" href="/pay/#find">Look up an invoice</a><a class="pill ghost" href="mailto:hello@aetheradigital.com">Email us</a></div>
+</section>
+
+<div class="grid" id="view" hidden>
+<section class="card sum" aria-labelledby="amt">
+<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap">
+<p class="eyebrow" id="inv-no">Invoice</p><span class="badge" id="badge"></span>
+</div>
+<h1 id="amt">$0.00</h1>
+<p class="due" id="due-line"></p>
+<dl class="meta">
+<div><dt>Billed to</dt><dd id="bill-to"></dd></div>
+<div><dt>Issued</dt><dd id="issued"></dd></div>
+<div><dt>Due</dt><dd id="due"></dd></div>
+</dl>
+<table class="lines"><thead><tr><th scope="col">Description</th><th scope="col" class="num">Amount</th></tr></thead><tbody id="lines"></tbody></table>
+<dl class="totals" id="totals"></dl>
+<p class="memo" id="memo" hidden></p>
+<a class="pdf" id="pdf" href="#" target="_blank" rel="noopener" hidden><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 2v8M4.5 6.5L8 10l3.5-3.5M3 13h10"></path></svg>Download PDF</a>
+</section>
+
+<aside>
+<section class="card payc" id="pay" hidden aria-labelledby="pay-h">
+<h2 id="pay-h">Pay securely</h2>
+<p class="sub">Bank account (ACH) or card. Bank payments have lower fees and clear in a few business days.</p>
+<form id="pay-form" novalidate>
+<div class="pe-wrap" id="pe-wrap"><div class="dots" aria-hidden="true"><span></span><span></span><span></span></div><div id="payment-element"></div></div>
+<p class="err" id="pay-err" role="alert" hidden></p>
+<button class="pill block" type="submit" id="pay-btn" disabled>Pay</button>
+</form>
+<p class="secure"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="2"></rect><path d="M5 7V5a3 3 0 016 0v2"></path></svg>Encrypted and processed by Stripe</p>
+</section>
+
+<section class="card state" id="done" hidden>
+<div class="icon" id="done-icon" style="background: #CFE8B4"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+<h2 id="done-h">Paid. <em>Thank you.</em></h2>
+<p id="done-p">This invoice has been paid in full. A receipt was emailed to you.</p>
+</section>
+</aside>
+</div>
+
+</div>
+</main>
+<script src="/assets/pay.js"></script>
+<script>
+(function () {
+  var qs = new URLSearchParams(location.search);
+  var i = qs.get('i') || '', k = qs.get('k') || '';
+  var $ = function (id) { return document.getElementById(id); };
+  var inv = null, stripe = null, pay = null;
+
+  function show(id) { ['loading', 'missing', 'view'].forEach(function (x) { $(x).hidden = x !== id; }); }
+  function text(id, v) { $(id).textContent = v; }
+  function done(h, p, color) {
+    $('pay').hidden = true; $('done').hidden = false;
+    $('done-h').innerHTML = h; text('done-p', p);
+    if (color) $('done-icon').style.background = color;
+  }
+
+  function render() {
+    var M = function (c) { return AetheraPay.money(c, inv.currency); };
+    var st = inv.status;
+    text('inv-no', 'Invoice ' + (inv.number || ''));
+    document.title = 'Invoice ' + inv.number + ' — Aethera Digital';
+    var badge = $('badge');
+    badge.className = 'badge ' + st; badge.textContent = st === 'open' ? 'Due' : st;
+    text('amt', M(st === 'paid' ? inv.total : inv.amount_remaining));
+    text('due-line', st === 'paid' ? 'Paid in full' : st === 'void' ? 'This invoice was cancelled' : (inv.due ? 'Due ' + inv.due : 'Due on receipt'));
+    $('bill-to').innerHTML = '';
+    [inv.customer_name, inv.customer_email].filter(Boolean).forEach(function (v, n) {
+      if (n) $('bill-to').appendChild(document.createElement('br'));
+      $('bill-to').appendChild(document.createTextNode(v));
+    });
+    text('issued', inv.issued || '—'); text('due', inv.due || '—');
+    var tb = $('lines'); tb.innerHTML = '';
+    inv.lines.forEach(function (l) {
+      var tr = document.createElement('tr');
+      var d = document.createElement('td'); d.textContent = l.description;
+      if (l.quantity > 1) { var q = document.createElement('div'); q.className = 'qty'; q.textContent = l.quantity + ' × ' + M(Math.round(l.amount / l.quantity)); d.appendChild(q); }
+      var a = document.createElement('td'); a.className = 'num'; a.textContent = M(l.amount);
+      tr.appendChild(d); tr.appendChild(a); tb.appendChild(tr);
+    });
+    var t = $('totals'); t.innerHTML = '';
+    function row(label, value, cls) {
+      var dt = document.createElement('dt'); dt.textContent = label; var dd = document.createElement('dd'); dd.textContent = value;
+      if (cls) { dt.className = cls; dd.className = cls; }
+      t.appendChild(dt); t.appendChild(dd);
+    }
+    if (inv.tax) { row('Subtotal', M(inv.subtotal)); row('Tax', M(inv.tax)); }
+    if (inv.amount_paid && st !== 'paid') { row('Total', M(inv.total)); row('Paid', '−' + M(inv.amount_paid)); }
+    row(st === 'paid' ? 'Total paid' : 'Amount due', M(st === 'paid' ? inv.total : inv.amount_remaining), 'grand');
+    if (inv.memo) { $('memo').hidden = false; text('memo', inv.memo); }
+    if (inv.pdf) { $('pdf').hidden = false; $('pdf').href = inv.pdf; }
+    show('view');
+
+    if (st === 'paid') return done('Paid. <em>Thank you.</em>', 'This invoice has been paid in full. Your receipt was emailed to ' + (inv.customer_email || 'you') + '.');
+    if (st === 'void') return done('This invoice <em>was cancelled.</em>', 'There’s nothing to pay. Questions? Email hello@aetheradigital.com.', '#A3A3AD');
+    if (st === 'uncollectible' || !inv.clientSecret) return done('Payment <em>unavailable online.</em>', 'Please email hello@aetheradigital.com and we’ll help you settle this invoice.', '#FFC4A8');
+    setupPayment();
+  }
+
+  function setupPayment() {
+    AetheraPay.config().then(function (cfg) {
+      if (!cfg.enabled || !window.Stripe) return done('Online payment is <em>offline.</em>', 'Please try again shortly, or email hello@aetheradigital.com.', '#FFC4A8');
+      document.querySelector('.testbar').hidden = !cfg.testMode;
+      stripe = window.Stripe(cfg.publishableKey);
+      return stripe.retrievePaymentIntent(inv.clientSecret).then(function (r) {
+        var pi = r.paymentIntent;
+        if (pi && pi.status === 'processing') return done('Payment <em>processing.</em>', 'Your bank payment is on its way and usually clears in 3–5 business days. We’ll email your receipt when it does.', '#AFCBFF');
+        if (pi && pi.status === 'succeeded') return done('Paid. <em>Thank you.</em>', 'Your payment went through. A receipt is on its way to your inbox.');
+        $('pay').hidden = false;
+        pay = AetheraPay.mountPayment(stripe, { mount: '#payment-element', clientSecret: inv.clientSecret, email: inv.customer_email, name: inv.customer_name });
+        pay.element.on('ready', function () { $('pe-wrap').classList.add('ready'); $('pay-btn').disabled = false; });
+        $('pay-btn').textContent = 'Pay ' + AetheraPay.money(inv.amount_remaining, inv.currency);
+      });
+    });
+  }
+
+  $('pay-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (!pay) return;
+    var btn = $('pay-btn'); var label = btn.textContent;
+    btn.disabled = true; btn.innerHTML = '<span class="spin" aria-hidden="true"></span>Processing…';
+    $('pay-err').hidden = true;
+    var billing = {};
+    if (inv.customer_email) billing.email = inv.customer_email;
+    if (inv.customer_name) billing.name = inv.customer_name;
+    stripe.confirmPayment({
+      elements: pay.elements,
+      confirmParams: {
+        return_url: location.origin + '/pay/complete/?kind=invoice&i=' + encodeURIComponent(i) + '&k=' + encodeURIComponent(k),
+        payment_method_data: { billing_details: billing }
+      }
+    }).then(function (r) {
+      if (r.error) {
+        $('pay-err').textContent = r.error.message || 'Your payment didn’t go through. Please try again.';
+        $('pay-err').hidden = false; btn.disabled = false; btn.textContent = label;
+      }
+    });
+  });
+
+  if (!i || !k) { show('missing'); return; }
+  fetch('/api/invoice?i=' + encodeURIComponent(i) + '&k=' + encodeURIComponent(k), { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+    .then(function (x) {
+      if (!x.ok) { if (x.d && x.d.error) text('missing-msg', x.d.error); show('missing'); return; }
+      inv = x.d; render();
+    })
+    .catch(function () { text('missing-msg', 'We couldn’t load your invoice. Check your connection and try again.'); show('missing'); });
+})();
+</script>
+</body>
+</html>
