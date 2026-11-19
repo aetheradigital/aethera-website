@@ -136,7 +136,7 @@ position:relative;background:var(--ink);color:var(--paper);font-family:"Avenir N
 .p-stage{position:relative;height:var(--stage);overflow:hidden}
 .ae[data-mode="live"] .p-stage{position:sticky;top:0}
 .p-layer{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:56px;text-align:center;padding:40px}
-.p-disc{background:#fff;color:#000;clip-path:circle(calc(3% + var(--pp)*70%) at 50% 50%)}
+.p-disc{background:#fff;color:#000;clip-path:circle(calc(var(--pp) * 72%) at 50% 50%)}
 .p-word{font-family:"Raleway",sans-serif;font-weight:200;font-size:clamp(56px,9vw,150px);line-height:.95;letter-spacing:-.03em;transform:scale(calc(.82 + var(--pp)*.22))}
 .p-word em{font-style:italic;font-weight:300}
 .p-disc .p-word em:nth-child(1){color:#7B5CFF}
