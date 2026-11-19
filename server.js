@@ -16,8 +16,9 @@
  *   ADMIN_HOST              hostname of the admin site (default admin.aetheradigital.com). On that host "/" is the
  *                           admin dashboard; on the public domain /admin redirects there and the admin API is off.
  *                           Other hosts (the onrender.com address, localhost) keep /admin as a fallback.
- *   PRICE_PARTNERSHIP       Stripe Price ID for the $2,250/mo Startup Partnership
- *   PORTAL_URL              Stripe customer portal login link
+ *   PRICE_PARTNERSHIP       optional: comma-separated Price IDs for the $2,250/mo Startup Partnership
+ *                           (defaults to the live or sandbox IDs, picked from the secret key)
+ *   PORTAL_URL              optional: Stripe customer portal login link (defaults to live or sandbox the same way)
  *   STRIPE_AUTOMATIC_TAX    "on" to turn on Stripe Tax for new invoices and subscriptions (needs Tax set up)
  *   INVOICE_LINK_SECRET     optional key for signing invoice links (defaults to one derived from the secret key)
  *   STRIPE_WEBHOOK_SECRET   whsec_... signing secret of the webhook endpoint (/api/stripe/webhook)
@@ -39,8 +40,24 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const STRIPE_API = process.env.STRIPE_API_BASE || 'https://api.stripe.com';
 const SECRET = process.env.STRIPE_SECRET_KEY || '';
 const PUBLISHABLE = process.env.STRIPE_PUBLISHABLE_KEY || '';
-const PRICE_PARTNERSHIP = process.env.PRICE_PARTNERSHIP || 'price_1UdHOkA3W4CrH9UBqqAxdgXg';
-const PORTAL_URL = process.env.PORTAL_URL || 'https://billing.stripe.com/p/login/test_5kQ28qfmPgiGgFc9Mg7wA00';
+// Live or sandbox is decided by the installed secret key, so swapping keys in Render switches every ID below too.
+const LIVE = /^(sk|rk)_live_/.test(SECRET);
+// Startup Partnership prices: live is five monthly line items ($200 + $600 + $450 + $750 + $250 = $2,250);
+// the sandbox keeps its single $2,250 price. PRICE_PARTNERSHIP (comma-separated price IDs) overrides either.
+const PARTNERSHIP_PRICES_LIVE = [
+  'price_1Ude58Ac3ai6mWIjWrBwlPa1', // Brand & Positioning $200
+  'price_1Ude5gAc3ai6mWIjvRHYWNxW', // Website $600
+  'price_1Ude64Ac3ai6mWIjrtj9zP8W', // SEO & AI Search Visibility $450
+  'price_1Ude6SAc3ai6mWIjbnjLG5AE', // Customer Acquisition & Lead Follow-Up $750
+  'price_1Ude82Ac3ai6mWIjAUtETc1t'  // Reporting & Strategy $250
+];
+const PARTNERSHIP_PRICES_TEST = ['price_1UdHOkA3W4CrH9UBqqAxdgXg'];
+const PARTNERSHIP_PRICES = process.env.PRICE_PARTNERSHIP
+  ? process.env.PRICE_PARTNERSHIP.split(',').map(function (s) { return s.trim(); }).filter(Boolean)
+  : (LIVE ? PARTNERSHIP_PRICES_LIVE : PARTNERSHIP_PRICES_TEST);
+const PORTAL_URL = process.env.PORTAL_URL || (LIVE
+  ? 'https://billing.stripe.com/p/login/5kQ28qgsw00v8UGfDQ1gs00'
+  : 'https://billing.stripe.com/p/login/test_5kQ28qfmPgiGgFc9Mg7wA00');
 const SITE_URL = (process.env.SITE_URL || '').replace(/\/+$/, '');
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const ADMIN_HOST = String(process.env.ADMIN_HOST || 'admin.aetheradigital.com').toLowerCase();
@@ -333,7 +350,7 @@ async function subscribe(req, res) {
     const customer = await findOrCreateCustomer(email, name, company, 'aethera_partnership');
     const sub = await stripe('POST', '/v1/subscriptions', {
       customer: customer.id,
-      items: [{ price: PRICE_PARTNERSHIP, quantity: 1 }],
+      items: PARTNERSHIP_PRICES.map(function (price) { return { price: price, quantity: 1 }; }),
       payment_behavior: 'default_incomplete',
       payment_settings: { payment_method_types: PAYMENT_METHOD_TYPES, save_default_payment_method: 'on_subscription' },
       automatic_tax: AUTOMATIC_TAX ? { enabled: true } : undefined,

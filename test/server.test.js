@@ -563,6 +563,31 @@ function request(port, method, p, body, headers) {
     assert.strictEqual(r.status, 404); assert.ok(r.body.includes('drifted off'));
     ok('serves pay, invoice, complete and admin pages, assets, 404 and blocks path traversal');
 
+    // ---------- live keys switch prices and portal ----------
+    const livePort = port + 1000;
+    const live = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+      env: Object.assign({}, process.env, {
+        PORT: String(livePort), STRIPE_SECRET_KEY: 'sk_live_fake', STRIPE_PUBLISHABLE_KEY: 'pk_live_fake',
+        STRIPE_API_BASE: 'http://127.0.0.1:' + stripePort, PRICE_PARTNERSHIP: '', PORTAL_URL: ''
+      }),
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    try {
+      await new Promise((res) => live.stdout.once('data', res));
+      r = await request(livePort, 'GET', '/api/config');
+      j = JSON.parse(r.body);
+      assert.strictEqual(j.testMode, false);
+      assert.strictEqual(j.portalUrl, 'https://billing.stripe.com/p/login/5kQ28qgsw00v8UGfDQ1gs00');
+      r = await request(livePort, 'POST', '/api/subscribe', { email: 'jo@acme.co', name: 'Jo Doe', company: 'Acme' });
+      assert.strictEqual(r.status, 200);
+      c = calls.filter((x) => x.path === '/v1/subscriptions').pop();
+      const livePrices = [0, 1, 2, 3, 4].map((i) => c.body.get('items[' + i + '][price]'));
+      assert.deepStrictEqual(livePrices, ['price_1Ude58Ac3ai6mWIjWrBwlPa1', 'price_1Ude5gAc3ai6mWIjvRHYWNxW', 'price_1Ude64Ac3ai6mWIjrtj9zP8W', 'price_1Ude6SAc3ai6mWIjbnjLG5AE', 'price_1Ude82Ac3ai6mWIjAUtETc1t']);
+      assert.strictEqual(c.body.get('items[5][price]'), null);
+      assert.strictEqual(c.body.get('items[0][quantity]'), '1');
+    } finally { live.kill(); }
+    ok('live keys: five Startup Partnership line items and the live billing portal');
+
     console.log('\n' + passed + ' passed');
   } catch (e) {
     console.error('\nFAILED:', e.stack); process.exitCode = 1;
