@@ -63,7 +63,7 @@
     if (opts.clientSecret) elementsOpts.clientSecret = opts.clientSecret;
     else {
       elementsOpts.mode = opts.mode; elementsOpts.amount = opts.amount; elementsOpts.currency = opts.currency || 'usd';
-      elementsOpts.paymentMethodTypes = opts.paymentMethodTypes;
+      elementsOpts.allowedPaymentMethodTypes = opts.paymentMethodTypes;
     }
     var elements = stripe.elements(elementsOpts);
     var pe = elements.create('payment', {
