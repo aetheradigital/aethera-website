@@ -53,7 +53,7 @@ Add `aetheradigital.com`, `www.aetheradigital.com` and `admin.aetheradigital.com
 | `ANTHROPIC_API_KEY` | Claude API key (console.anthropic.com) used to extract action items. `ANTHROPIC_MODEL` optionally overrides the default `claude-haiku-5-5`. |
 | `ADMIN_PASSWORD` | Password for the admin site. Admin is off until this is set. Use a long passphrase. |
 | `ADMIN_HOST` | Optional, default `admin.aetheradigital.com`. On that host `/` is the admin dashboard; on `aetheradigital.com` and `www.` the `/admin` path redirects there and the admin API is disabled. The onrender.com address keeps `/admin` as a fallback. |
-| `PRICE_PARTNERSHIP`, `PORTAL_URL` | Optional overrides; defaults are the sandbox IDs. Set live IDs when going live. |
+| `PRICE_PARTNERSHIP`, `PORTAL_URL` | Optional overrides; leave unset. The server picks live or sandbox defaults from `STRIPE_SECRET_KEY`: live keys use the five Startup Package prices ($200 + $600 + $450 + $750 + $250) and the live billing portal. `PRICE_PARTNERSHIP` takes comma-separated price IDs. |
 | `STRIPE_AUTOMATIC_TAX` | `on` to enable Stripe Tax on new invoices and subscriptions (finish Tax setup and add registrations first). |
 | `INVOICE_LINK_SECRET` | Optional. Key for signing invoice links; defaults to one derived from `STRIPE_SECRET_KEY` (changing the key changes the links). |
 | `STRIPE_WEBHOOK_SECRET` | `whsec_...` signing secret of the Stripe webhook endpoint. Sandbox and live endpoints have different secrets. |
