@@ -272,7 +272,7 @@ background:linear-gradient(90deg,var(--lav),var(--pink),var(--peach)) no-repeat 
 .foot-row nav a:hover{color:var(--lav)}
 .foot .tag{font-family:"Raleway",sans-serif;font-size:24px;font-weight:300;max-width:22ch;margin:0}
 .foot-mark{display:flex;justify-content:center;margin:96px 0 40px;opacity:calc(.25 + var(--pf)*.75);transform:scale(calc(.7 + var(--pf)*.3)) translateY(calc((1 - var(--pf))*140px));transform-origin:50% 100%}
-.foot-mark img{display:block;width:100%;max-width:1200px;height:auto}
+.foot-mark img{display:block;width:100%;max-width:1100px;height:auto}
 .foot-base{display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px;color:var(--mute);font-size:14px}
 
 /* scroll-driven reveals (live mode only) */
@@ -311,6 +311,12 @@ background:linear-gradient(90deg,var(--lav),var(--pink),var(--peach)) no-repeat 
 .pillar{padding:20px}
 .pillar p{display:none}
 .jx{grid-template-columns:minmax(0,1fr)}
+.foot{padding:56px 0 32px}
+.foot-row{flex-direction:column;gap:20px}
+.foot .tag{font-size:20px}
+.foot-row nav{gap:0 22px}
+.foot-mark{margin:44px 0 28px}
+.foot-base{flex-direction:column;align-items:flex-start;gap:4px}
 .jx-side{position:static}
 .jx-counter,.jx-rail{display:none}
 .ui-dash{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -619,7 +625,7 @@ background:linear-gradient(90deg,var(--lav),var(--pink),var(--peach)) no-repeat 
 <a href="#contact">Contact</a>
 </nav>
 </div>
-<div class="foot-mark" aria-hidden="true"><img src="/assets/wordmark-full.png" alt=""></div>
+<div class="foot-mark" aria-hidden="true"><img src="/assets/wordmark.png" alt=""></div>
 <div class="foot-base"><span>© 2026 Aethera Digital</span><span>aetheradigital.com</span><span>Your Digital Growth Partner</span></div>
 </div>
 </footer>
