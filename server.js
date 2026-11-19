@@ -12,7 +12,10 @@
  *   STRIPE_PUBLISHABLE_KEY  pk_test_... / pk_live_...
  *   ADMIN_PASSWORD          password for /admin (admin is disabled until this is set; use 12+ characters)
  *   SITE_URL                optional public origin used in emailed links, e.g. https://aetheradigital.com
- *                           (when unset, links use the address the admin page was opened on)
+ *                           (when unset, links use the public domain, or the address the admin page was opened on)
+ *   ADMIN_HOST              hostname of the admin site (default admin.aetheradigital.com). On that host "/" is the
+ *                           admin dashboard; on the public domain /admin redirects there and the admin API is off.
+ *                           Other hosts (the onrender.com address, localhost) keep /admin as a fallback.
  *   PRICE_PARTNERSHIP       Stripe Price ID for the $2,250/mo Startup Partnership
  *   PORTAL_URL              Stripe customer portal login link
  *   STRIPE_AUTOMATIC_TAX    "on" to turn on Stripe Tax for new invoices and subscriptions (needs Tax set up)
@@ -35,6 +38,9 @@ const PRICE_PARTNERSHIP = process.env.PRICE_PARTNERSHIP || 'price_1UdHOkA3W4CrH9
 const PORTAL_URL = process.env.PORTAL_URL || 'https://billing.stripe.com/p/login/test_5kQ28qfmPgiGgFc9Mg7wA00';
 const SITE_URL = (process.env.SITE_URL || '').replace(/\/+$/, '');
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const ADMIN_HOST = String(process.env.ADMIN_HOST || 'admin.aetheradigital.com').toLowerCase();
+const PUBLIC_DOMAIN = ADMIN_HOST.replace(/^admin\./, '');
+const PUBLIC_HOSTS = [PUBLIC_DOMAIN, 'www.' + PUBLIC_DOMAIN];
 const AUTOMATIC_TAX = /^(on|true|1)$/i.test(process.env.STRIPE_AUTOMATIC_TAX || '');
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const NOTIFY_URL = process.env.PAYMENTS_NOTIFY_URL || '';
@@ -131,9 +137,21 @@ async function readJson(req, limit) {
   try { return JSON.parse((await readBody(req, limit)) || '{}') || {}; } catch (e) { return null; }
 }
 
-// Origin used for links we email. SITE_URL wins; otherwise the address this request came in on.
+function hostOf(req) {
+  return String(req.headers.host || '').toLowerCase().replace(/:\d+$/, '');
+}
+// Which site this request is for: the admin subdomain, the public domain, or anything else (onrender.com, localhost).
+function siteOf(req) {
+  const h = hostOf(req);
+  if (h === ADMIN_HOST) return 'admin';
+  if (PUBLIC_HOSTS.indexOf(h) >= 0) return 'public';
+  return 'other';
+}
+// Origin used for links we email. SITE_URL wins; links made from the admin subdomain use the public domain;
+// otherwise the address this request came in on.
 function originOf(req) {
   if (SITE_URL) return SITE_URL;
+  if (siteOf(req) === 'admin') return 'https://' + PUBLIC_DOMAIN;
   const proto = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
   return proto + '://' + req.headers.host;
 }
@@ -692,13 +710,33 @@ const server = http.createServer(async function (req, res) {
   try { url = new URL(req.url, 'http://localhost'); } catch (e) { return send(res, 400, 'Bad request'); }
   try {
     const p = url.pathname;
+    const site = siteOf(req);
+    if (p === '/healthz') return send(res, 200, 'ok', { 'Content-Type': 'text/plain' });
+
+    // admin.aetheradigital.com: the dashboard at "/", its API and shared assets; everything else goes to the public site.
+    if (site === 'admin') {
+      if (p.startsWith('/api/admin/')) return await adminApi(req, res, url);
+      if (p === '/' || p === '/index.html') return serveStatic(req, res, new URL('/admin/', 'http://localhost'));
+      if (p === '/admin' || p.startsWith('/admin/')) return send(res, 301, '', { Location: '/' });
+      if (p.startsWith('/assets/') || p === '/robots.txt' || p === '/api/config') {
+        if (p === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n', { 'Content-Type': 'text/plain; charset=utf-8' });
+        if (p === '/api/config') return config(req, res);
+        return serveStatic(req, res, url);
+      }
+      return send(res, 302, '', { Location: 'https://' + PUBLIC_DOMAIN + p + (url.search || '') });
+    }
+    // aetheradigital.com: no admin here.
+    if (site === 'public') {
+      if (p === '/admin' || p.startsWith('/admin/')) return send(res, 301, '', { Location: 'https://' + ADMIN_HOST + '/' });
+      if (p.startsWith('/api/admin/')) return json(res, 404, { error: 'Not found' });
+    }
+
     if (p === '/api/config' && req.method === 'GET') return config(req, res);
     if (p === '/api/invoice' && req.method === 'GET') return await getInvoice(req, res, url);
     if (p === '/api/invoice-lookup' && req.method === 'POST') return await lookupInvoice(req, res);
     if (p === '/api/subscribe' && req.method === 'POST') return await subscribe(req, res);
     if (p === '/api/stripe/webhook' && req.method === 'POST') return await stripeWebhook(req, res);
     if (p.startsWith('/api/admin/')) return await adminApi(req, res, url);
-    if (p === '/healthz') return send(res, 200, 'ok', { 'Content-Type': 'text/plain' });
     if (p.startsWith('/api/')) return json(res, 404, { error: 'Not found' });
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });
     return serveStatic(req, res, url);

@@ -18,9 +18,13 @@ Aethera Digital's website plus a native, embedded Stripe checkout.
 - `test/server.test.js` - runs the server against a fake Stripe API (`npm test`)
 - `forms/apps-script.gs` - Google Apps Script: contact form, payments sheet/alerts, branded invoice emails
 
+## Domains
+
+Add `aetheradigital.com`, `www.aetheradigital.com` and `admin.aetheradigital.com` as custom domains on the aethera-site service in Render, then create the DNS records Render lists. The admin session cookie is scoped to the admin host only.
+
 ## How invoicing works
 
-1. Sign in at `/admin` and create an invoice (client, line items, due date, note). It's created and finalized in Stripe.
+1. Sign in at `https://admin.aetheradigital.com` (or `/admin` on the onrender.com address) and create an invoice (client, line items, due date, note). It's created and finalized in Stripe.
 2. "Create & email" sends a branded email (via the Apps Script) with a **View & pay invoice** button linking to `/pay/invoice/?i=…&k=…`.
    The link is signed, so it can't be guessed or edited. Without the Apps Script, Stripe's own invoice email is sent instead.
 3. Clients who lost the email can find the invoice on `/pay` with the invoice number and billing email.
@@ -33,7 +37,8 @@ Aethera Digital's website plus a native, embedded Stripe checkout.
 | `STRIPE_SECRET_KEY` | Secret or restricted key. Set in Render only, never commit. |
 | `STRIPE_PUBLISHABLE_KEY` | `pk_test_...` / `pk_live_...` |
 | `SITE_URL` | Public origin used in emailed invoice links, e.g. `https://aetheradigital.com`. Leave unset until the domain points at this service; links then use the address the admin page is open on. |
-| `ADMIN_PASSWORD` | Password for `/admin`. Admin is off until this is set. Use a long passphrase. |
+| `ADMIN_PASSWORD` | Password for the admin site. Admin is off until this is set. Use a long passphrase. |
+| `ADMIN_HOST` | Optional, default `admin.aetheradigital.com`. On that host `/` is the admin dashboard; on `aetheradigital.com` and `www.` the `/admin` path redirects there and the admin API is disabled. The onrender.com address keeps `/admin` as a fallback. |
 | `PRICE_PARTNERSHIP`, `PORTAL_URL` | Optional overrides; defaults are the sandbox IDs. Set live IDs when going live. |
 | `STRIPE_AUTOMATIC_TAX` | `on` to enable Stripe Tax on new invoices and subscriptions (finish Tax setup and add registrations first). |
 | `INVOICE_LINK_SECRET` | Optional. Key for signing invoice links; defaults to one derived from `STRIPE_SECRET_KEY` (changing the key changes the links). |

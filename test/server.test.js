@@ -317,6 +317,41 @@ function request(port, method, p, body, headers) {
     assert.strictEqual(r.status, 404);
     ok('old custom-amount checkout endpoint is gone; webhook is POST only');
 
+    // ---------- admin subdomain ----------
+    const ADMIN = { Host: 'admin.aetheradigital.com' };
+    r = await request(port, 'GET', '/', null, ADMIN);
+    assert.strictEqual(r.status, 200); assert.ok(r.body.includes('Aethera Admin') && r.body.includes('login-form'));
+    r = await request(port, 'GET', '/admin/', null, ADMIN);
+    assert.strictEqual(r.status, 301); assert.strictEqual(r.headers.location, '/');
+    r = await request(port, 'GET', '/assets/pay.css', null, ADMIN);
+    assert.strictEqual(r.status, 200);
+    r = await request(port, 'GET', '/robots.txt', null, ADMIN);
+    assert.ok(r.body.includes('Disallow: /'));
+    r = await request(port, 'GET', '/pay/invoice/?i=x&k=y', null, ADMIN);
+    assert.strictEqual(r.status, 302); assert.strictEqual(r.headers.location, 'https://aetheradigital.com/pay/invoice/?i=x&k=y');
+    r = await request(port, 'GET', '/api/invoice?i=x&k=y', null, ADMIN);
+    assert.strictEqual(r.status, 302);
+    r = await request(port, 'POST', '/api/admin/login', { password: ADMIN_PW }, Object.assign({ 'X-Forwarded-Proto': 'https' }, ADMIN));
+    assert.strictEqual(r.status, 200);
+    const adminCookie = r.headers['set-cookie'][0];
+    assert.ok(!/Domain=/i.test(adminCookie), 'cookie stays on the admin host only');
+    r = await request(port, 'GET', '/api/admin/invoices', null, Object.assign({ Cookie: adminCookie.split(';')[0] }, ADMIN));
+    assert.strictEqual(r.status, 200);
+    ok('admin.aetheradigital.com: dashboard at /, admin API works, other paths go to the public site');
+
+    const PUB = { Host: 'aetheradigital.com' };
+    r = await request(port, 'GET', '/admin/', null, PUB);
+    assert.strictEqual(r.status, 301); assert.strictEqual(r.headers.location, 'https://admin.aetheradigital.com/');
+    r = await request(port, 'GET', '/admin', null, { Host: 'www.aetheradigital.com' });
+    assert.strictEqual(r.status, 301);
+    r = await request(port, 'POST', '/api/admin/login', { password: ADMIN_PW }, PUB);
+    assert.strictEqual(r.status, 404); assert.ok(!r.headers['set-cookie']);
+    r = await request(port, 'GET', '/pay/', null, PUB);
+    assert.strictEqual(r.status, 200);
+    r = await request(port, 'GET', '/admin/', null, { Host: 'aethera-site.onrender.com' });
+    assert.strictEqual(r.status, 200);
+    ok('aetheradigital.com: /admin redirects to the subdomain and the admin API is off; onrender.com keeps /admin');
+
     // ---------- static ----------
     r = await request(port, 'GET', '/');
     assert.strictEqual(r.status, 200); assert.ok(r.body.includes('<title>Aethera Digital'));
