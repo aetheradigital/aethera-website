@@ -45,7 +45,7 @@
 </head>
 <body>
 <div class="testbar" hidden>Test mode · no real charges</div>
-<header class="topbar"><a class="logo" href="/" aria-label="Aethera Digital home"><img src="/assets/icon.png" alt="" width="34" height="34"></a><a class="back" href="/pay/">Client payments</a></header>
+<header class="topbar"><a class="logo" href="/" aria-label="Aethera Digital home"><img src="/assets/icon.png" alt="" width="34" height="34"></a><a class="back" href="/pay/">Client Payments</a></header>
 <main class="stage">
 <div class="orb" style="background: #C8B6FF; left: -6%; top: -8%" aria-hidden="true"></div>
 <div class="orb" style="background: #FFC4A8; right: -4%; top: 30%" aria-hidden="true"></div>
@@ -61,7 +61,7 @@
 <p class="eyebrow">Invoice</p>
 <h2 style="margin-top: 14px">We couldn’t find <em>that invoice.</em></h2>
 <p id="missing-msg">The link may be incomplete. Try the button in your invoice email again, or look it up with your invoice number.</p>
-<div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 28px"><a class="pill" href="/pay/#find">Look up an invoice</a><a class="pill ghost" href="mailto:hello@aetheradigital.com">Email us</a></div>
+<div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 28px"><a class="pill" href="/pay/#find">Look Up an Invoice</a><a class="pill ghost" href="mailto:hello@aetheradigital.com">Email Us</a></div>
 </section>
 
 <div class="grid" id="view" hidden>
@@ -84,7 +84,7 @@
 
 <aside>
 <section class="card payc" id="pay" hidden aria-labelledby="pay-h">
-<h2 id="pay-h">Pay securely</h2>
+<h2 id="pay-h">Pay Securely</h2>
 <p class="sub">Bank account (ACH) or card. Bank payments have lower fees and clear in a few business days.</p>
 <form id="pay-form" novalidate>
 <div class="pe-wrap" id="pe-wrap"><div class="dots" aria-hidden="true"><span></span><span></span><span></span></div><div id="payment-element"></div></div>
@@ -128,7 +128,7 @@
     var badge = $('badge');
     badge.className = 'badge ' + st; badge.textContent = st === 'open' ? 'Due' : st;
     text('amt', M(st === 'paid' ? inv.total : inv.amount_remaining));
-    text('due-line', st === 'paid' ? 'Paid in full' : st === 'void' ? 'This invoice was cancelled' : (inv.due ? 'Due ' + inv.due : 'Due on receipt'));
+    text('due-line', st === 'paid' ? 'Paid in Full' : st === 'void' ? 'This invoice was cancelled' : (inv.due ? 'Due ' + inv.due : 'Due on Receipt'));
     $('bill-to').innerHTML = '';
     [inv.customer_name, inv.customer_email].filter(Boolean).forEach(function (v, n) {
       if (n) $('bill-to').appendChild(document.createElement('br'));
@@ -151,7 +151,7 @@
     }
     if (inv.tax) { row('Subtotal', M(inv.subtotal)); row('Tax', M(inv.tax)); }
     if (inv.amount_paid && st !== 'paid') { row('Total', M(inv.total)); row('Paid', '−' + M(inv.amount_paid)); }
-    row(st === 'paid' ? 'Total paid' : 'Amount due', M(st === 'paid' ? inv.total : inv.amount_remaining), 'grand');
+    row(st === 'paid' ? 'Total Paid' : 'Amount Due', M(st === 'paid' ? inv.total : inv.amount_remaining), 'grand');
     if (inv.memo) { $('memo').hidden = false; text('memo', inv.memo); }
     if (inv.pdf) { $('pdf').hidden = false; $('pdf').href = inv.pdf; }
     show('view');

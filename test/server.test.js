@@ -419,7 +419,7 @@ function request(port, method, p, body, headers) {
     ok('lead mode: form submissions and inbound inquiries become leads; spam screened out; Add to pipeline creates a Lead client');
 
     d = await dj('POST', '/suggestions/' + sug[0].id + '/accept', {});
-    assert.strictEqual(d.status, 200); assert.strictEqual(d.body.project.name, 'General to-dos'); assert.strictEqual(d.body.task.due, '2026-11-21');
+    assert.strictEqual(d.status, 200); assert.strictEqual(d.body.project.name, 'General To-Dos'); assert.strictEqual(d.body.task.due, '2026-11-21');
     assert.strictEqual(d.body.suggestion.status, 'added');
     assert.strictEqual((await dj('POST', '/suggestions/' + sug[0].id + '/accept', {})).status, 409);
     const s2 = (await dj('POST', '/suggestions', { client_id: cl.id, title: 'Another', status: 'new', source: 'email' })).body.item;
