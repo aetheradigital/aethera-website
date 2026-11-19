@@ -96,7 +96,7 @@ function inbound_(me) {
   var out = []; var seen = {};
   var queries = [
     'in:inbox newer_than:' + LOOKBACK_DAYS + 'd -from:aetheradigital.com -from:oakgrovebusiness.com -category:promotions -category:social -category:updates -category:forums -from:noreply -from:no-reply -from:donotreply -from:mailer-daemon',
-    'newer_than:' + LOOKBACK_DAYS + 'd subject:"New website inquiry"'
+    'in:anywhere -in:trash newer_than:' + LOOKBACK_DAYS + 'd subject:"New website inquiry"'   // includes Spam, where form notices can land
   ];
   queries.forEach(function (q) {
     GmailApp.search(q, 0, 40).forEach(function (th) {
