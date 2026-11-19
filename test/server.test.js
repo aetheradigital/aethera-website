@@ -404,7 +404,7 @@ function request(port, method, p, body, headers) {
     // ---------- admin subdomain ----------
     const ADMIN = { Host: 'admin.aetheradigital.com' };
     r = await request(port, 'GET', '/', null, ADMIN);
-    assert.strictEqual(r.status, 200); assert.ok(r.body.includes('Aethera Admin') && r.body.includes('login-form'));
+    assert.strictEqual(r.status, 200); assert.ok(r.body.includes('Aethera Desk') && r.body.includes('login-form') && r.body.includes('/assets/desk.js'));
     r = await request(port, 'GET', '/admin/', null, ADMIN);
     assert.strictEqual(r.status, 301); assert.strictEqual(r.headers.location, '/');
     r = await request(port, 'GET', '/assets/pay.css', null, ADMIN);

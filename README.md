@@ -6,7 +6,9 @@ Aethera Digital's website plus a native, embedded Stripe checkout.
 - `public/pay/` - client payments: invoice lookup, Startup Partnership signup, billing portal link
 - `public/pay/invoice/` - a single invoice with line items and a branded Stripe Payment Element (reached by signed link)
 - `public/pay/complete/` - payment result page
-- `public/admin/` - password-protected admin: create, email, resend, void and mark invoices paid
+- `public/admin/` + `public/assets/desk.js|css` - the **Aethera Desk** at admin.aetheradigital.com: overview, clients & prospects,
+  projects with checklists, files, approvals, monthly client reports with charts, and invoicing (create, email, resend, void, mark paid)
+- `lib/pg.js` - dependency-free Postgres client; `lib/desk.js` - Desk record schema, checklists and storage
 - `public/assets/pay.js`, `pay.css` - shared Payment Element styling and helpers
 - `server.js` - zero-dependency Node server: serves `public/` and a small Stripe API
   - `GET /api/config` - publishable key, test mode, portal URL
@@ -37,6 +39,7 @@ Add `aetheradigital.com`, `www.aetheradigital.com` and `admin.aetheradigital.com
 | `STRIPE_SECRET_KEY` | Secret or restricted key. Set in Render only, never commit. |
 | `STRIPE_PUBLISHABLE_KEY` | `pk_test_...` / `pk_live_...` |
 | `SITE_URL` | Public origin used in emailed invoice links, e.g. `https://aetheradigital.com`. Leave unset until the domain points at this service; links then use the address the admin page is open on. |
+| `DATABASE_URL` | Render Postgres **Internal Database URL** for the Desk (`aethera-desk`). Without it the Desk keeps data in memory only. |
 | `ADMIN_PASSWORD` | Password for the admin site. Admin is off until this is set. Use a long passphrase. |
 | `ADMIN_HOST` | Optional, default `admin.aetheradigital.com`. On that host `/` is the admin dashboard; on `aetheradigital.com` and `www.` the `/admin` path redirects there and the admin API is disabled. The onrender.com address keeps `/admin` as a fallback. |
 | `PRICE_PARTNERSHIP`, `PORTAL_URL` | Optional overrides; defaults are the sandbox IDs. Set live IDs when going live. |

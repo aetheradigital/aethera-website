@@ -558,7 +558,7 @@ const MAX_FILE_BYTES = 15 * 1024 * 1024;
 
 async function stripeInvoicesFor(email, origin) {
   if (!SECRET || !email) return [];
-  const customers = await stripe('GET', '/v1/customers', { email: email, limit: 10 });
+  const customers = await stripe('GET', '/v1/customers', { email: String(email).trim().toLowerCase(), limit: 10 });
   const out = [];
   for (const c of customers.data || []) {
     const list = await stripe('GET', '/v1/invoices', { customer: c.id, limit: 50 });
