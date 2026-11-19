@@ -8,6 +8,7 @@ var NOTIFY_TO = 'hello@aetheradigital.com';
 
 function doPost(e) {
   var p = (e && e.parameter) || {};
+  if (p.kind === 'payment') return payment_(p);
   if (p.company_site) return json_({ ok: true }); // spam trap
 
   var name = clip_(p.name, 200);
@@ -34,6 +35,50 @@ function doPost(e) {
     subject: 'New website inquiry: ' + name,
     body: 'Name: ' + name + '\nEmail: ' + email + '\nNeeds: ' + (needs || '-') +
           '\n\n' + (message || '(no message)') + '\n\nSent from ' + page
+  });
+  return json_({ ok: true });
+}
+
+/**
+ * Payment events forwarded by the site's Stripe webhook (/api/stripe/webhook).
+ * Set the script property PAYMENTS_TOKEN (Project Settings > Script properties) to the same
+ * value as PAYMENTS_NOTIFY_TOKEN in Render. Rows go to a "Payments" tab, created on first use.
+ */
+var PAYMENT_HEADERS = ['Received', 'Event', 'Status', 'Amount', 'Client', 'Email', 'Plan',
+  'Invoice #', 'Stripe customer', 'Reference', 'Mode', 'Stripe event id', 'Event type'];
+
+function payment_(p) {
+  var expected = PropertiesService.getScriptProperties().getProperty('PAYMENTS_TOKEN');
+  if (!expected || p.token !== expected) return json_({ ok: false, error: 'unauthorized' });
+
+  var mode = p.livemode === 'true' ? 'live' : 'test';
+  var row = [new Date(), clip_(p.label, 200), clip_(p.status, 50), clip_(p.amount, 50), clip_(p.name, 200),
+    clip_(p.email, 200), clip_(p.plan, 100), clip_(p.invoice_number, 50), clip_(p.customer, 100),
+    clip_(p.reference, 500), mode, clip_(p.event_id, 100), clip_(p.event_type, 100)];
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName('Payments');
+    if (!sheet) {
+      sheet = ss.insertSheet('Payments');
+      sheet.appendRow(PAYMENT_HEADERS);
+      sheet.setFrozenRows(1);
+    }
+    sheet.appendRow(row);
+  } finally {
+    lock.releaseLock();
+  }
+
+  var who = p.name || p.email || p.customer || 'client';
+  MailApp.sendEmail({
+    to: NOTIFY_TO,
+    subject: (mode === 'test' ? '[TEST] ' : '') + p.label + (p.amount ? ': ' + p.amount : '') + ' (' + who + ')',
+    body: 'Event: ' + p.label + '\nStatus: ' + p.status + '\nAmount: ' + (p.amount || '-') +
+          '\nClient: ' + (p.name || '-') + '\nEmail: ' + (p.email || '-') + '\nPlan: ' + (p.plan || '-') +
+          '\nInvoice #: ' + (p.invoice_number || '-') + '\nReference: ' + (p.reference || '-') +
+          '\n\nStripe event ' + p.event_id + ' (' + p.event_type + ', ' + mode + ' mode)'
   });
   return json_({ ok: true });
 }

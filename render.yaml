@@ -16,3 +16,9 @@ services:
         sync: false
       - key: STRIPE_PUBLISHABLE_KEY
         sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: PAYMENTS_NOTIFY_URL
+        sync: false
+      - key: PAYMENTS_NOTIFY_TOKEN
+        sync: false

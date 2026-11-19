@@ -5,11 +5,22 @@ const assert = require('assert');
 const { spawn } = require('child_process');
 const path = require('path');
 
+const crypto = require('crypto');
+
+const WHSEC = 'whsec_test_secret';
 const calls = [];
+const notes = [];
+let failNotify = false;
 const fakeStripe = http.createServer((req, res) => {
   let body = '';
   req.on('data', (c) => (body += c));
   req.on('end', () => {
+    if (req.url === '/notify') {
+      res.setHeader('Content-Type', 'application/json');
+      if (failNotify) { res.statusCode = 500; return res.end('{"ok":false}'); }
+      notes.push(new URLSearchParams(body));
+      return res.end('{"ok":true}');
+    }
     calls.push({ method: req.method, url: req.url, auth: req.headers.authorization, body: new URLSearchParams(body) });
     res.setHeader('Content-Type', 'application/json');
     if (req.method === 'POST' && req.url === '/v1/checkout/sessions') return res.end(JSON.stringify({ id: 'cs_test_abc123456789', client_secret: 'cs_test_abc123456789_secret_xyz' }));
@@ -36,7 +47,7 @@ function request(port, method, p, body, headers) {
   const stripePort = fakeStripe.address().port;
   const port = 18000 + Math.floor(Math.random() * 1000);
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
-    env: Object.assign({}, process.env, { PORT: String(port), STRIPE_SECRET_KEY: 'sk_test_fake', STRIPE_PUBLISHABLE_KEY: 'pk_test_fake', STRIPE_API_BASE: 'http://127.0.0.1:' + stripePort, SITE_URL: 'https://aetheradigital.com' }),
+    env: Object.assign({}, process.env, { PORT: String(port), STRIPE_SECRET_KEY: 'sk_test_fake', STRIPE_PUBLISHABLE_KEY: 'pk_test_fake', STRIPE_API_BASE: 'http://127.0.0.1:' + stripePort, SITE_URL: 'https://aetheradigital.com', STRIPE_WEBHOOK_SECRET: WHSEC, PAYMENTS_NOTIFY_URL: 'http://127.0.0.1:' + stripePort + '/notify', PAYMENTS_NOTIFY_TOKEN: 'tok123' }),
     stdio: ['ignore', 'pipe', 'pipe']
   });
   await new Promise((r) => child.stdout.once('data', r));
@@ -103,6 +114,70 @@ function request(port, method, p, body, headers) {
     r = await request(port, 'GET', '/api/session-status?session_id=../../v1/customers');
     assert.strictEqual(r.status, 400);
     ok('session status returns only safe fields and validates the id');
+
+    // webhook
+    const sign = (payload, t, secret) => {
+      t = t || Math.floor(Date.now() / 1000);
+      return 't=' + t + ',v1=' + crypto.createHmac('sha256', secret || WHSEC).update(t + '.' + payload).digest('hex');
+    };
+    const hook = (evt, sig) => {
+      const payload = JSON.stringify(evt);
+      return request(port, 'POST', '/api/stripe/webhook', payload, { 'Stripe-Signature': sig === undefined ? sign(payload) : sig(payload) });
+    };
+    const paidSession = {
+      id: 'evt_1', type: 'checkout.session.completed', livemode: false,
+      data: { object: { id: 'cs_test_1', mode: 'payment', payment_status: 'paid', amount_total: 125050, currency: 'usd', customer: 'cus_1', payment_intent: 'pi_1',
+        customer_details: { email: 'client@example.com', name: 'Pat', business_name: 'Bacon Roofing' }, metadata: { invoice_number: 'AD-1042', source: 'aethera_pay_page' } } }
+    };
+    r = await hook(paidSession);
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(notes.length, 1);
+    let n = notes[0];
+    assert.strictEqual(n.get('token'), 'tok123'); assert.strictEqual(n.get('kind'), 'payment');
+    assert.strictEqual(n.get('status'), 'paid'); assert.strictEqual(n.get('amount'), '$1,250.50');
+    assert.strictEqual(n.get('name'), 'Bacon Roofing'); assert.strictEqual(n.get('invoice_number'), 'AD-1042');
+    assert.strictEqual(n.get('livemode'), 'false');
+    ok('webhook: signed checkout.session.completed is recorded with amount, client and invoice #');
+
+    r = await hook(paidSession);
+    assert.strictEqual(r.status, 200); assert.ok(JSON.parse(r.body).duplicate); assert.strictEqual(notes.length, 1);
+    ok('webhook: retried event is not recorded twice');
+
+    r = await hook(Object.assign({}, paidSession, { id: 'evt_2' }), () => 't=1,v1=deadbeef');
+    assert.strictEqual(r.status, 400);
+    r = await hook(Object.assign({}, paidSession, { id: 'evt_3' }), (p) => sign(p, null, 'whsec_wrong'));
+    assert.strictEqual(r.status, 400);
+    r = await hook(Object.assign({}, paidSession, { id: 'evt_4' }), (p) => sign(p, Math.floor(Date.now() / 1000) - 3600));
+    assert.strictEqual(r.status, 400);
+    r = await hook(Object.assign({}, paidSession, { id: 'evt_5' }), () => '');
+    assert.strictEqual(r.status, 400);
+    assert.strictEqual(notes.length, 1);
+    ok('webhook: rejects forged, wrong-secret, stale and unsigned events');
+
+    r = await hook({ id: 'evt_6', type: 'checkout.session.completed', livemode: false, data: { object: { mode: 'subscription', payment_status: 'unpaid', amount_total: 225000, currency: 'usd', subscription: 'sub_1', customer_details: { email: 'a@b.co' }, metadata: { plan: 'startup_partnership' } } } });
+    assert.strictEqual(r.status, 200);
+    n = notes.pop(); assert.strictEqual(n.get('status'), 'processing'); assert.strictEqual(n.get('reference'), 'sub_1');
+    r = await hook({ id: 'evt_7', type: 'invoice.payment_failed', livemode: false, data: { object: { billing_reason: 'subscription_cycle', amount_due: 225000, currency: 'usd', number: 'L8ZL-0002', customer_email: 'a@b.co', metadata: {} } } });
+    n = notes.pop(); assert.strictEqual(n.get('label'), 'Monthly renewal failed'); assert.strictEqual(n.get('status'), 'failed');
+    r = await hook({ id: 'evt_8', type: 'invoice.paid', livemode: false, data: { object: { billing_reason: 'manual', amount_paid: 125050, metadata: { source: 'aethera_pay_page' } } } });
+    assert.strictEqual(r.status, 200); assert.strictEqual(notes.length, 1);
+    r = await hook({ id: 'evt_9', type: 'customer.subscription.updated', livemode: false, data: { object: { id: 'sub_1', status: 'past_due', metadata: {} }, previous_attributes: { status: 'active' } } });
+    n = notes.pop(); assert.strictEqual(n.get('label'), 'Subscription status: past_due');
+    r = await hook({ id: 'evt_10', type: 'customer.created', livemode: false, data: { object: {} } });
+    assert.strictEqual(r.status, 200); assert.strictEqual(notes.length, 1);
+    ok('webhook: ACH processing, failed renewal, status change recorded; pay-page receipts and other events skipped');
+
+    failNotify = true;
+    r = await hook(Object.assign({}, paidSession, { id: 'evt_11' }));
+    assert.strictEqual(r.status, 500);
+    failNotify = false;
+    r = await hook(Object.assign({}, paidSession, { id: 'evt_11' }));
+    assert.strictEqual(r.status, 200); assert.strictEqual(notes.length, 2);
+    ok('webhook: returns 500 when the sheet is unreachable so Stripe retries, then records on retry');
+
+    r = await request(port, 'GET', '/api/stripe/webhook');
+    assert.strictEqual(r.status, 404);
+    ok('webhook: POST only');
 
     // static + traversal
     r = await request(port, 'GET', '/');
