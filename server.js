@@ -908,8 +908,10 @@ async function acceptSuggestion(req, res, id) {
     if (!project || project.client_id !== s.client_id) return json(res, 400, { error: 'Choose one of this client’s projects.' });
   } else {
     const projects = await desk.list('project', { client_id: s.client_id });
-    project = projects.find(function (p) { return p.name === 'General to-dos'; }) ||
-      await desk.create('project', { client_id: s.client_id, name: 'General to-dos', status: 'in_progress', description: 'Follow-ups from email and meetings.' }, { client_id: s.client_id });
+    project = projects.find(function (p) { return String(p.name || '').toLowerCase() === 'general to-dos'; });
+    if (project && project.name !== 'General To-Dos') project = (await desk.update('project', project.id, { name: 'General To-Dos' })) || project;
+    project = project ||
+      await desk.create('project', { client_id: s.client_id, name: 'General To-Dos', status: 'in_progress', description: 'Follow-ups from email and meetings.' }, { client_id: s.client_id });
   }
   const title = clip(body.title || s.title, 300);
   const task = await desk.create('task', { project_id: project.id, title: title, done: false, due: s.due || null, owner: s.owner || null, position: Date.now() / 1e3 },
