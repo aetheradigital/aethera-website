@@ -193,6 +193,43 @@ select.st option{background:#121217;color:#fff;text-transform:none}
   .desk{display:block}.main{padding:0}
   .kpi .v,.prose p{color:#000 !important}
 }
+/* report PDF (see exportReport): only the report document prints, in the Desk's dark look */
+.pr{display:none}
+@media print{
+  @page{size:letter;margin:0}
+  html,body{background:#000 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body:has(#print-report)>*:not(#print-report){display:none !important}
+  .pr{display:block;position:relative;color:#fff;font-family:"Avenir Next","Avenir","Nunito Sans",system-ui,sans-serif;font-size:10.5pt;line-height:1.55;
+    padding:.55in .65in .85in;box-decoration-break:clone;-webkit-box-decoration-break:clone;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .pr *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .pr-bg{position:fixed;inset:0;background:#000 radial-gradient(ellipse 80% 40% at 85% 0%,rgba(148,120,240,.16),transparent 70%);z-index:-1}
+  .pr-foot{position:fixed;left:.65in;right:.65in;bottom:.35in;display:flex;justify-content:space-between;font-size:7.5pt;letter-spacing:.14em;text-transform:uppercase;color:#8E8E99;
+    border-top:1px solid rgba(255,255,255,.12);padding-top:8px}
+  .pr-head{display:flex;justify-content:space-between;align-items:center;padding-bottom:18px;border-bottom:1px solid rgba(255,255,255,.14)}
+  .pr-head img{height:34px;width:auto;display:block}
+  .pr-meta{text-align:right;font-size:7.5pt;letter-spacing:.16em;text-transform:uppercase;color:#8E8E99;line-height:1.5}
+  .pr-meta b{display:block;color:#fff;font-weight:600;font-size:9pt;letter-spacing:.12em}
+  .pr-title{padding:30px 0 22px}
+  .pr-eyebrow{margin:0;font-size:8pt;letter-spacing:.2em;text-transform:uppercase;color:#C8B6FF;font-weight:600}
+  .pr h1{font-family:"Raleway","Avenir Next",sans-serif;font-weight:300;font-size:34pt;letter-spacing:-.02em;line-height:1.05;margin:6px 0 8px;color:#fff}
+  .pr-sub{margin:0;color:#B9B9C2;font-size:9.5pt}
+  .pr h2{font-family:"Raleway","Avenir Next",sans-serif;font-weight:400;font-size:13pt;letter-spacing:-.01em;margin:0 0 10px;color:#fff}
+  .pr-summary{border:1px solid rgba(255,255,255,.12);border-radius:16px;background:#0D0C12;padding:18px 20px;margin-bottom:22px;break-inside:avoid}
+  .pr-summary p,.pr-card p{margin:0;color:#E4E4EA;white-space:pre-line}
+  .pr-group{margin-bottom:20px;break-inside:avoid}
+  .pr-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .pr .kpi{border:1px solid rgba(255,255,255,.12) !important;border-radius:14px;background:#0D0C12 !important;padding:12px 14px 8px;break-inside:avoid;color:#fff}
+  .pr .kpi .k{font-size:7pt;letter-spacing:.14em;color:#8E8E99}
+  .pr .kpi .v{font-size:20pt;margin-top:2px;color:#fff !important}
+  .pr .kpi .d{font-size:8pt}
+  .pr .kpi svg{margin-top:6px}
+  .pr-two{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px;break-inside:avoid}
+  .pr-card{border:1px solid rgba(255,255,255,.12);border-radius:16px;background:#0D0C12;padding:16px 18px}
+  .pr ul{margin:0;padding:0;list-style:none}
+  .pr li{position:relative;padding-left:16px;margin:0 0 6px;color:#E4E4EA}
+  .pr li::before{content:"";position:absolute;left:0;top:.6em;width:6px;height:6px;border-radius:50%;background:#C8B6FF}
+  .pr-note{color:#8E8E99;font-size:8pt;margin:4px 0 0}
+}
 
 /* suggested to-dos */
 .sug .list li{align-items:flex-start}
@@ -239,6 +276,7 @@ small.was{color:var(--mute);font-size:13px}
 .hrow{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
 .hrow h2{margin:0}
 @media print{.monthnav{display:none !important}}
+
 .fld small.was{display:block;line-height:1.45}
 .was.bad{color:var(--peach)}
 .dl dd small.was{display:block;margin-top:2px}
