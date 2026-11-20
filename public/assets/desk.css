@@ -239,3 +239,7 @@ small.was{color:var(--mute);font-size:13px}
 .hrow{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
 .hrow h2{margin:0}
 @media print{.monthnav{display:none !important}}
+.fld small.was{display:block;line-height:1.45}
+.was.bad{color:var(--peach)}
+.dl dd small.was{display:block;margin-top:2px}
+p.was{color:var(--mute)}

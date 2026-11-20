@@ -45,6 +45,18 @@ Add `aetheradigital.com`, `www.aetheradigital.com` and `admin.aetheradigital.com
    (tasks now record when they were ticked), approvals and decisions, open tasks, and email/meeting follow-ups. It fills the boxes for review; nothing is saved until you save.
 5. **Save & Mark Ready**, then **Mark as Sent** once it's shared with the client.
 
+### Pulling numbers from Google automatically
+
+- On a client's page, **Reporting Connections** › **Connect Google**: enter the Search Console site (e.g. `baconroofing.com`, saved as
+  `sc-domain:baconroofing.com`, or a URL-prefix property like `https://www.baconroofing.com/`) and the numeric GA4 Property ID.
+- `forms/desk-reporting.gs` (Google Apps Script, installed once in nicholas@; setup steps at the top of the file, manifest in
+  `forms/desk-reporting.appsscript.json`) runs every morning, asks the Desk which clients are connected, and sends each one's
+  Search Console clicks / impressions / average position and GA4 sessions / key events (as leads) / revenue for the last full month.
+  It uses the same `DESK_COLLECTOR_TOKEN`. Run `backfill` once to fill the previous 3 months.
+- Pulled numbers go into that month's draft (created if needed) and are labelled with their source in the editor. A number typed or
+  changed by hand is never overwritten, and reports marked Ready or Sent are left alone.
+- The client page shows the last pull for each connection, including problems such as "No access to this GA4 property".
+
 ## How invoicing works
 
 1. Sign in at `https://admin.aetheradigital.com` (or `/admin` on the onrender.com address) and create an invoice (client, line items, due date, note). It's created and finalized in Stripe.

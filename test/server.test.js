@@ -398,6 +398,52 @@ function request(port, method, p, body, headers) {
     assert.ok(cj.emails.includes('pat.lee@gmail.com') && cj.names.includes('bacon'));
     ok('collector: token required; client list gives domains, extra emails and short names (generic domains excluded)');
 
+    // ---------- reporting connections ----------
+    const ae = (await dj('POST', '/clients', { name: 'Nicholas', company: 'Aethera Digital', status: 'active', gsc_site: 'https://www.aetheradigital.com', ga4_property: 'properties/412345678' })).body.item;
+    assert.strictEqual(ae.gsc_site, 'https://www.aetheradigital.com/', 'URL-prefix sites get their trailing slash');
+    assert.strictEqual(ae.ga4_property, '412345678');
+    d = await dj('PATCH', '/clients/' + ae.id, { gsc_site: 'www.AetheraDigital.com' });
+    assert.strictEqual(d.body.item.gsc_site, 'sc-domain:aetheradigital.com', 'a bare domain becomes a Domain property');
+    d = await dj('PATCH', '/clients/' + ae.id, { ga4_property: 'G-ABC123XYZ' });
+    assert.strictEqual(d.status, 400); assert.ok(/measurement ID/.test(d.body.error));
+    assert.strictEqual((await dj('PATCH', '/clients/' + ae.id, { report_sync: { gsc: { ok: true } } })).body.item.report_sync, undefined, 'sync status can’t be set from the admin');
+    r = await request(port, 'GET', '/api/collector/reporting', null, { Authorization: 'Bearer wrong' });
+    assert.strictEqual(r.status, 401);
+    r = await request(port, 'GET', '/api/collector/reporting?period=2026-09', null, T);
+    let rp = JSON.parse(r.body);
+    assert.strictEqual(rp.period, '2026-09');
+    assert.deepStrictEqual(rp.clients.map((x) => x.id), [ae.id], 'only clients with connections');
+    assert.strictEqual(rp.clients[0].gsc_site, 'sc-domain:aetheradigital.com');
+    // first pull creates the draft and fills it in
+    r = await request(port, 'POST', '/api/collector/metrics', { client_id: ae.id, period: '2026-09', source: 'gsc', metrics: { seo_clicks: 410, seo_impressions: 12000, seo_avg_position: 18.4, sessions: 999 } }, T);
+    rp = JSON.parse(r.body);
+    assert.deepStrictEqual(rp.written, ['seo_clicks', 'seo_impressions', 'seo_avg_position'], 'a source only writes its own metrics');
+    let rep = (await dj('GET', '/reports/' + rp.report_id)).body.item;
+    assert.strictEqual(rep.status, 'draft'); assert.strictEqual(rep.created_by, 'auto');
+    assert.strictEqual(rep.metrics.seo_clicks, 410); assert.strictEqual(rep.sources.seo_clicks, 'gsc'); assert.strictEqual(rep.metrics.sessions, undefined);
+    // a number typed by hand wins over the next pull; untouched pulled numbers refresh
+    await dj('PATCH', '/reports/' + rep.id, { metrics: Object.assign({}, rep.metrics, { seo_clicks: 450 }) });
+    r = await request(port, 'POST', '/api/collector/metrics', { client_id: ae.id, period: '2026-09', source: 'gsc', metrics: { seo_clicks: 415, seo_impressions: 12100, seo_avg_position: 18.2 } }, T);
+    rp = JSON.parse(r.body);
+    assert.deepStrictEqual(rp.kept, ['seo_clicks']); assert.ok(rp.written.includes('seo_impressions'));
+    rep = (await dj('GET', '/reports/' + rep.id)).body.item;
+    assert.strictEqual(rep.metrics.seo_clicks, 450); assert.strictEqual(rep.metrics.seo_impressions, 12100);
+    r = await request(port, 'POST', '/api/collector/metrics', { client_id: ae.id, period: '2026-09', source: 'ga4', metrics: { sessions: 2200, leads: 14 } }, T);
+    assert.deepStrictEqual(JSON.parse(r.body).written, ['sessions', 'leads']);
+    // errors are shown on the client; reviewed reports aren't touched
+    await request(port, 'POST', '/api/collector/metrics', { client_id: ae.id, period: '2026-09', source: 'ga4', error: 'No access to this GA4 property' }, T);
+    let aeNow = (await dj('GET', '/clients/' + ae.id)).body.item;
+    assert.strictEqual(aeNow.report_sync.ga4.ok, false); assert.strictEqual(aeNow.report_sync.gsc.ok, true);
+    assert.ok(/2 numbers updated, 1 kept/.test(aeNow.report_sync.gsc.message), aeNow.report_sync.gsc.message);
+    await dj('PATCH', '/reports/' + rep.id, { status: 'ready' });
+    r = await request(port, 'POST', '/api/collector/metrics', { client_id: ae.id, period: '2026-09', source: 'ga4', metrics: { sessions: 1 } }, T);
+    assert.strictEqual(JSON.parse(r.body).reviewed, true);
+    assert.strictEqual((await dj('GET', '/reports/' + rep.id)).body.item.metrics.sessions, 2200);
+    assert.strictEqual((await request(port, 'POST', '/api/collector/metrics', { client_id: ae.id, period: '2026-13', source: 'gsc', metrics: {} }, T)).status, 400);
+    assert.strictEqual((await request(port, 'POST', '/api/collector/metrics', { client_id: ae.id, period: '2026-09', source: 'facebook', metrics: {} }, T)).status, 400);
+    await dj('DELETE', '/clients/' + ae.id);
+    ok('reporting connections: IDs tidied, script gets the client list, pulled numbers fill drafts without overwriting hand-typed ones, errors shown');
+
     const own = (await dj('POST', '/clients', { name: 'Nicholas', company: 'Aethera Digital', email: 'nicholas@aetheradigital.com', status: 'active' })).body.item;
     r = await request(port, 'GET', '/api/collector/clients', null, T);
     assert.ok(!JSON.parse(r.body).clients.some((x) => x.id === own.id), 'our own company is never a match target');
