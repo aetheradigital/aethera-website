@@ -1203,6 +1203,23 @@ async function stripeWebhook(req, res) {
 }
 
 // ---------- static files ----------
+// Pages refer to their scripts and styles as /assets/name.ext?v=…; the server swaps in a fingerprint of the file's
+// contents, so after a deploy browsers fetch any file that changed and keep reusing the ones that didn't.
+const assetVersions = new Map();
+function assetVersion(name) {
+  if (!assetVersions.has(name)) {
+    let v = '0';
+    try { v = crypto.createHash('sha256').update(fs.readFileSync(path.join(PUBLIC_DIR, 'assets', name))).digest('hex').slice(0, 10); } catch (e) {}
+    assetVersions.set(name, v);
+  }
+  return assetVersions.get(name);
+}
+function versionAssets(html) {
+  return html.toString('utf8').replace(/(["'(])\/assets\/([A-Za-z0-9._-]+\.(?:js|css))\?v=[A-Za-z0-9._-]*/g, function (m, q, name) {
+    return q + '/assets/' + name + '?v=' + assetVersion(name);
+  });
+}
+
 function serveStatic(req, res, url) {
   let rel;
   try { rel = decodeURIComponent(url.pathname); } catch (e) { return send(res, 400, 'Bad request'); }
@@ -1223,6 +1240,7 @@ function serveStatic(req, res, url) {
       }
       const ext = path.extname(file).toLowerCase();
       const cache = ext === '.html' ? 'no-cache' : 'public, max-age=86400';
+      if (ext === '.html') data = versionAssets(data);
       send(res, 200, req.method === 'HEAD' ? '' : data, { 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': cache });
     });
   });

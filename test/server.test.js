@@ -597,6 +597,12 @@ function request(port, method, p, body, headers) {
     const ADMIN = { Host: 'admin.aetheradigital.com' };
     r = await request(port, 'GET', '/', null, ADMIN);
     assert.strictEqual(r.status, 200); assert.ok(r.body.includes('Aethera Desk') && r.body.includes('login-form') && r.body.includes('/assets/desk.js'));
+    {
+      const fp = (f) => require('crypto').createHash('sha256').update(require('fs').readFileSync(require('path').join(__dirname, '..', 'public', 'assets', f))).digest('hex').slice(0, 10);
+      assert.ok(r.body.includes('/assets/desk.js?v=' + fp('desk.js')) && r.body.includes('/assets/desk.css?v=' + fp('desk.css')), 'admin page asks for the current script and styles');
+      const pay = await request(port, 'GET', '/pay/', null, { Host: 'aetheradigital.com' });
+      assert.ok(pay.body.includes('/assets/pay.js?v=' + fp('pay.js')), 'payment page too');
+    }
     r = await request(port, 'GET', '/admin/', null, ADMIN);
     assert.strictEqual(r.status, 301); assert.strictEqual(r.headers.location, '/');
     r = await request(port, 'GET', '/assets/pay.css', null, ADMIN);

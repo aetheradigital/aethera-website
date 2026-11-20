@@ -720,10 +720,10 @@
 
   // ---------- reports ----------
   // Where a report stands: none (no report yet), needs (draft, no numbers), review (draft with content), ready, sent.
-  // Reports from before statuses existed count as ready.
+  // Reports from before statuses existed are treated as drafts, the same way the Google pull treats them.
   function repState(r) {
     if (!r) return 'none';
-    var s = r.status || 'ready';
+    var s = r.status || 'draft';
     if (s === 'draft') return Object.keys(r.metrics || {}).length || r.summary ? 'review' : 'needs';
     return s;
   }
