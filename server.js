@@ -27,6 +27,9 @@
  *   DESK_COLLECTOR_TOKEN    shared secret the Apps Script collector sends (Authorization: Bearer ...)
  *   ANTHROPIC_API_KEY       Claude API key used to turn client emails and meeting notes into suggested to-dos
  *   ANTHROPIC_MODEL         optional model override (default claude-haiku-5-5)
+ *   CLIENT_HOST             hostname of the client portal (default client.aetheradigital.com). Elsewhere it's at /client/.
+ *   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
+ *                           Cloudflare R2 bucket for Desk and portal files (without them, files are kept in Postgres)
  *   DATABASE_URL            Postgres connection string for the Aethera Desk (Render internal URL). Without it the Desk
  *                           keeps data in memory only (lost on restart) and says so on screen.
  */
@@ -64,6 +67,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const ADMIN_HOST = String(process.env.ADMIN_HOST || 'admin.aetheradigital.com').toLowerCase();
 const PUBLIC_DOMAIN = ADMIN_HOST.replace(/^admin\./, '');
 const PUBLIC_HOSTS = [PUBLIC_DOMAIN, 'www.' + PUBLIC_DOMAIN];
+const CLIENT_HOST = String(process.env.CLIENT_HOST || 'client.' + PUBLIC_DOMAIN).toLowerCase();
 const AUTOMATIC_TAX = /^(on|true|1)$/i.test(process.env.STRIPE_AUTOMATIC_TAX || '');
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const NOTIFY_URL = process.env.PAYMENTS_NOTIFY_URL || '';
@@ -167,6 +171,7 @@ function hostOf(req) {
 function siteOf(req) {
   const h = hostOf(req);
   if (h === ADMIN_HOST) return 'admin';
+  if (h === CLIENT_HOST) return 'client';
   if (PUBLIC_HOSTS.indexOf(h) >= 0) return 'public';
   return 'other';
 }
@@ -661,9 +666,11 @@ async function deskApi(req, res, url) {
   if (p === '/meta' && m === 'GET') {
     const templates = {}; Object.keys(deskLib.TEMPLATES).forEach(function (k) { templates[k] = { label: deskLib.TEMPLATES[k].label, count: deskLib.TEMPLATES[k].tasks.length }; });
     return json(res, 200, { store: desk.kind, templates: templates, services: deskLib.SERVICES, client_status: deskLib.CLIENT_STATUS, project_status: deskLib.PROJECT_STATUS, approval_status: deskLib.APPROVAL_STATUS, approval_kind: deskLib.APPROVAL_KIND, file_category: deskLib.FILE_CATEGORY, metrics: deskLib.METRICS,
-      metric_groups: deskLib.METRIC_GROUPS, collector: Boolean(COLLECTOR_TOKEN), report_status: deskLib.REPORT_STATUS, report_month: deskLib.lastFullMonth(), ai: Boolean(ANTHROPIC_KEY) });
+      metric_groups: deskLib.METRIC_GROUPS, collector: Boolean(COLLECTOR_TOKEN), report_status: deskLib.REPORT_STATUS, report_month: deskLib.lastFullMonth(), ai: Boolean(ANTHROPIC_KEY),
+      file_limit_mb: Math.round(fileLimit() / 1048576), file_storage: r2.enabled ? 'r2' : 'database', client_host: CLIENT_HOST });
   }
   if (p === '/overview' && m === 'GET') return deskOverview(req, res);
+  if (/^\/(portal|audit)(\/|$)/.test(p)) { const r = await portalAdmin(req, res, p, m, url); if (r !== null) return r; return json(res, 404, { error: 'Not found' }); }
   if (/^\/(quotes|terms|catalog)(\/|$)/.test(p)) { const r = await quotesApi(req, res, p, m, url); if (r !== null) return r; return json(res, 404, { error: 'Not found' }); }
 
   // client profile with everything attached
@@ -720,21 +727,34 @@ async function deskApi(req, res, url) {
     const category = deskLib.FILE_CATEGORY.indexOf(url.searchParams.get('category')) >= 0 ? url.searchParams.get('category') : 'other';
     const name = clip(url.searchParams.get('name') || 'file', 200).replace(/[\\/\0\r\n"]/g, '_');
     let content;
-    try { content = await readRaw(req, MAX_FILE_BYTES); } catch (e) { return json(res, 413, { error: 'Files can be up to 15 MB.' }); }
+    try { content = await readRaw(req, fileLimit()); } catch (e) { return json(res, 413, { error: 'Files can be up to ' + fileLimitText() + '.' }); }
     if (!content.length) return json(res, 400, { error: 'That file is empty.' });
     const mime = clip(String(req.headers['content-type'] || 'application/octet-stream').split(';')[0], 100);
-    return json(res, 200, { file: await desk.putFile({ client_id: client.id, name: name, mime: mime, category: category, content: content }) });
+    const shared = url.searchParams.get('shared') === '1';
+    const file = await storeFile({ client_id: client.id, name: name, mime: mime, category: category, content: content, shared: shared, uploaded_by: 'aethera' });
+    if (shared) await adminAudit(req, client.id, 'file', 'File shared with you', name);
+    return json(res, 200, { file: file });
   }
   mm = p.match(/^\/files\/(fil_[A-Za-z0-9_-]+)$/);
   if (mm && m === 'GET') {
-    const f = await desk.getFile(mm[1]);
+    const f = await desk.getFileMeta(mm[1]);
     if (!f) return json(res, 404, { error: 'File not found.' });
-    return send(res, 200, f.content, {
-      'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store',
-      'Content-Disposition': 'attachment; filename="' + String(f.name).replace(/[^\x20-\x7e]/g, '_') + '"; filename*=UTF-8\'\'' + encodeURIComponent(f.name)
-    });
+    return sendStoredFile(res, f);
   }
-  if (mm && m === 'DELETE') { await desk.removeFile(mm[1]); return json(res, 200, { ok: true }); }
+  if (mm && m === 'PATCH') {
+    const body = await readJson(req, 1024);
+    if (!body || typeof body.shared !== 'boolean') return json(res, 400, { error: 'Invalid request.' });
+    const before = await desk.getFileMeta(mm[1]);
+    if (!before) return json(res, 404, { error: 'File not found.' });
+    const f = await desk.setFileShared(mm[1], body.shared);
+    if (before.shared !== body.shared) await adminAudit(req, f.client_id, 'file', body.shared ? 'File shared with you' : 'File no longer shared', f.name);
+    return json(res, 200, { file: f });
+  }
+  if (mm && m === 'DELETE') {
+    const f = await desk.getFileMeta(mm[1]);
+    if (f) { await deleteStoredFile(f); if (f.shared) await adminAudit(req, f.client_id, 'file', 'File removed', f.name); }
+    return json(res, 200, { ok: true });
+  }
 
   // Digital Health: fetch a page for a scan (the browser runs the checks), Claude review, fixes to to-dos, import
   if (p === '/health/fetch' && m === 'POST') return healthFetch(req, res);
@@ -816,6 +836,10 @@ async function deskApi(req, res, url) {
       return json(res, 409, { error: 'This client has signed quotes, which are kept as records. Set their status to Past instead.' });
     }
     const before = type === 'asset' ? await desk.get('asset', id) : null;
+    if (type === 'client' && r2.enabled) {
+      for (const key of await desk.r2KeysFor(id)) { try { await r2.remove(key); } catch (e) { console.error('r2_delete_failed', key, e.message); } }
+    }
+    if (type === 'client') await portal.endAllSessions(id).catch(function () {});
     await desk.remove(type, id);
     if (before) await syncHealthReports(before.client_id);
     return json(res, 200, { ok: true });
@@ -1124,7 +1148,7 @@ async function sendSignedCopy(q, client, terms) {
   if (out && out.pdf && client) {
     const buf = Buffer.from(out.pdf, 'base64');
     if (buf.length && buf.length < MAX_FILE_BYTES) {
-      const f = await desk.putFile({ client_id: client.id, name: q.number + ' signed.pdf', mime: 'application/pdf', category: 'contract', content: buf });
+      const f = await storeFile({ client_id: client.id, name: q.number + ' signed.pdf', mime: 'application/pdf', category: 'contract', content: buf, shared: true, uploaded_by: 'aethera' });
       await desk.update('quote', q.id, { signed_file_id: f.id });
     }
   }
@@ -1708,6 +1732,439 @@ async function adminApi(req, res, url) {
   return json(res, 404, { error: 'Not found' });
 }
 
+// ---------- Client portal (client.aetheradigital.com) ----------
+// One login per client: the client's email in the Desk, once "Portal access" is turned on there. Clients sign in with a
+// one-time link (15 minutes) emailed through the Apps Script, get a 30-day session cookie scoped to the portal host, and see
+// only their own sent reports, projects, shared files, approvals, Stripe invoices and activity. Every sign-in, view,
+// download, approval and payment is written to the append-only audit log (lib/portal.js), which the Desk shows in full.
+const r2 = require('./lib/r2').create();
+const portalLib = require('./lib/portal');
+const portal = portalLib.createPortalStore(desk);
+const CLIENT_COOKIE = 'aethera_client';
+const R2_MAX_FILE_BYTES = 50 * 1024 * 1024;
+let portalReady = null;
+function portalInit() {
+  if (!portalReady) portalReady = deskInit().then(function () { return portal.init(); }).catch(function (e) { portalReady = null; throw e; });
+  return portalReady;
+}
+function fileLimit() { return r2.enabled ? R2_MAX_FILE_BYTES : MAX_FILE_BYTES; }
+function fileLimitText() { return r2.enabled ? '50 MB' : '15 MB'; }
+
+// Saves an uploaded file: to Cloudflare R2 when it's configured, otherwise in Postgres.
+async function storeFile(f) {
+  const id = deskLib.newFileId();
+  const rec = Object.assign({}, f, { id: id, size: f.content.length });
+  if (r2.enabled) {
+    rec.r2_key = 'clients/' + f.client_id + '/' + id;
+    await r2.put(rec.r2_key, f.content, f.mime);
+  }
+  return desk.putFile(rec);
+}
+// Sends a stored file: a 10-minute R2 download link, or the bytes from the database.
+async function sendStoredFile(res, meta) {
+  if (meta.r2_key) {
+    if (!r2.enabled) return json(res, 503, { error: 'File storage isn’t configured on the server.' });
+    return send(res, 302, '', { Location: r2.downloadUrl(meta.r2_key, meta.name, 600), 'Cache-Control': 'no-store' });
+  }
+  const f = await desk.getFile(meta.id);
+  if (!f || !f.content) return json(res, 404, { error: 'File not found.' });
+  return send(res, 200, f.content, {
+    'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store',
+    'Content-Disposition': 'attachment; filename="' + String(f.name).replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_') + '"; filename*=UTF-8\'\'' + encodeURIComponent(f.name)
+  });
+}
+async function deleteStoredFile(meta) {
+  if (meta && meta.r2_key && r2.enabled) { try { await r2.remove(meta.r2_key); } catch (e) { console.error('r2_delete_failed', meta.r2_key, e.message); } }
+  if (meta) await desk.removeFile(meta.id);
+}
+
+function reqMeta(req) { return { ip: ipOf(req), device: portalLib.deviceOf(req.headers['user-agent']) }; }
+// Writes an audit entry. Never throws: a logging hiccup must not break the action itself.
+async function audit(req, e) {
+  try { await portalInit(); await portal.log(Object.assign(req ? reqMeta(req) : {}, e)); }
+  catch (x) { console.error('audit_failed', e.event, x.message); }
+}
+function adminAudit(req, clientId, category, event, detail) {
+  return audit(req, { client_id: clientId, actor_type: 'admin', actor: 'Aethera team', category: category, event: event, detail: detail });
+}
+
+function portalBase(req) {
+  const s = siteOf(req);
+  if (s === 'client' || s === 'admin' || s === 'public') return 'https://' + CLIENT_HOST + '/';
+  const proto = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
+  return proto + '://' + req.headers.host + '/client/';
+}
+function clientCookie(req, value, maxAge) {
+  const secure = /https/.test(String(req.headers['x-forwarded-proto'] || '')) || siteOf(req) === 'client';
+  return CLIENT_COOKIE + '=' + encodeURIComponent(value) + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=' + maxAge + (secure ? '; Secure' : '');
+}
+function portalEmailOf(c) { return String((c && c.email) || '').trim().toLowerCase(); }
+function portalOpen(c) { return Boolean(c && c.portal_access && c.status !== 'past' && EMAIL_RE.test(portalEmailOf(c))); }
+
+async function sendPortalLink(req, c, welcome) {
+  if (!NOTIFY_URL) throw Object.assign(new Error('Email isn’t set up on the server (PAYMENTS_NOTIFY_URL).'), { status: 503 });
+  const t = portalLib.token();
+  await portal.addToken({ hash: portalLib.hash(t), client_id: c.id, email: portalEmailOf(c), expires_at: Date.now() + portalLib.LINK_TTL_MS, ip: ipOf(req) });
+  await quoteEmail({
+    to: c.email, name: c.name || '',
+    subject: welcome ? 'Your Aethera client portal is ready' : 'Your sign-in link for the Aethera client portal',
+    heading: welcome ? 'Your client portal is ready' : 'Sign in to your client portal',
+    intro: (welcome ? 'You now have a private portal for your reports, projects, files, approvals and billing with Aethera Digital. ' : '') +
+      'Use the button below to sign in. The link expires in 15 minutes and works once. If you didn’t ask for this, you can ignore this email.',
+    button: 'Sign in to my portal', url: portalBase(req) + '?t=' + t
+  });
+}
+
+async function portalLogin(req, res) {
+  if (!sameOrigin(req)) return json(res, 403, { error: 'Forbidden' });
+  if (limited(req, 5, 'portal-login')) return json(res, 429, { error: 'Too many attempts. Please wait a minute and try again.' });
+  const body = await readJson(req, 1024);
+  const email = clip(body && body.email, 200).toLowerCase();
+  if (!EMAIL_RE.test(email)) return json(res, 400, { error: 'Enter the email address on file for your account.' });
+  // Same answer whether or not the email has access, so the form can't be used to find client emails.
+  const done = { ok: true };
+  await portalInit();
+  const matches = (await desk.allOf('client')).filter(function (c) { return portalOpen(c) && portalEmailOf(c) === email; });
+  if (matches.length !== 1) { if (matches.length > 1) console.error('portal_duplicate_email'); return json(res, 200, done); }
+  const c = matches[0];
+  if (await portal.recentTokens(c.id, portalLib.LINK_TTL_MS) >= 3) {
+    await audit(req, { client_id: c.id, actor_type: 'client', actor: clientName(c), category: 'security', event: 'Too many sign-in links requested', detail: 'No link sent', flagged: true });
+    return json(res, 200, done);
+  }
+  try { await sendPortalLink(req, c, false); } catch (e) {
+    console.error('portal_link_email_failed', e.message);
+    return json(res, 502, { error: 'We couldn’t send the email right now. Please try again in a few minutes.' });
+  }
+  await audit(req, { client_id: c.id, actor_type: 'client', actor: clientName(c), category: 'signin', event: 'Sign-in link requested', detail: 'Emailed to ' + email });
+  return json(res, 200, done);
+}
+
+async function portalVerify(req, res) {
+  if (!sameOrigin(req)) return json(res, 403, { error: 'Forbidden' });
+  if (limited(req, 10, 'portal-verify')) return json(res, 429, { error: 'Too many attempts. Please wait a minute and try again.' });
+  const body = await readJson(req, 1024);
+  const t = clip(body && body.token, 100);
+  if (!/^[A-Za-z0-9_-]{30,64}$/.test(t)) return json(res, 400, { error: 'This sign-in link isn’t valid. Request a new one below.' });
+  await portalInit();
+  const r = await portal.useToken(portalLib.hash(t));
+  if (!r.ok) {
+    if (r.row) await audit(req, { client_id: r.row.client_id, actor_type: 'client', category: 'security', event: r.reason === 'used' ? 'Used sign-in link opened again' : 'Expired sign-in link used', detail: 'Sign-in refused', flagged: true });
+    return json(res, 400, { error: r.reason === 'used' ? 'This link has already been used. Request a new one below.' : 'This link has expired. Request a new one below.' });
+  }
+  const c = await desk.get('client', r.row.client_id);
+  if (!portalOpen(c) || portalEmailOf(c) !== r.row.email) return json(res, 403, { error: 'Portal access for this account is turned off. Contact hello@aetheradigital.com.' });
+  const meta = reqMeta(req);
+  const known = await portal.knownDevice(c.id, meta.device);
+  const sid = portalLib.token();
+  await portal.addSession({ hash: portalLib.hash(sid), client_id: c.id, device: meta.device, ip: meta.ip, expires_at: Date.now() + portalLib.SESSION_TTL_MS });
+  await audit(req, { client_id: c.id, actor_type: 'client', actor: clientName(c), category: 'signin', event: 'Signed in', detail: 'One-time link sent to the email on file' });
+  if (known.total > 0 && known.same === 0) await audit(req, { client_id: c.id, actor_type: 'client', actor: clientName(c), category: 'security', event: 'Sign-in from a new device', detail: 'First sign-in from ' + meta.device, flagged: true });
+  return json(res, 200, { ok: true }, { 'Set-Cookie': clientCookie(req, sid, Math.floor(portalLib.SESSION_TTL_MS / 1000)) });
+}
+
+async function portalSession(req) {
+  const sid = parseCookies(req)[CLIENT_COOKIE] || '';
+  if (!/^[A-Za-z0-9_-]{30,64}$/.test(sid)) return null;
+  await portalInit();
+  const h = portalLib.hash(sid);
+  const s = await portal.getSession(h);
+  if (!s) return null;
+  const c = await desk.get('client', s.client_id);
+  if (!portalOpen(c)) return null;
+  if (Date.now() - Date.parse(s.last_seen) > 5 * 60000) portal.touchSession(h).catch(function () {});
+  return { hash: h, client: c };
+}
+function clientAudit(req, s, category, event, detail) {
+  return audit(req, { client_id: s.client.id, actor_type: 'client', actor: clientName(s.client), category: category, event: event, detail: detail });
+}
+
+function monthLabel(period) {
+  const a = String(period).split('-');
+  return new Date(Date.UTC(Number(a[0]), Number(a[1]) - 1, 15)).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+function activityRow(e, name) {
+  return { at: e.at, category: e.category, event: e.event, detail: e.detail || '',
+    by: e.actor_type === 'client' ? name : e.actor_type === 'admin' ? 'Aethera team' : (e.actor || 'Aethera'), device: e.actor_type === 'client' ? (e.device || '') : '' };
+}
+
+async function portalData(req, res, s) {
+  const c = s.client; const name = clientName(c);
+  const [projects, tasks, approvals, reports, files, activity] = await Promise.all([
+    desk.list('project', { client_id: c.id }), desk.list('task', { client_id: c.id }), desk.list('approval', { client_id: c.id }),
+    desk.list('report', { client_id: c.id }), desk.listFiles(c.id), portal.audit({ client_id: c.id, limit: 300 })]);
+  const shared = files.filter(function (f) { return f.shared; });
+  const fileById = {}; shared.forEach(function (f) { fileById[f.id] = f; });
+  const sent = reports.filter(function (r) { return r.status === 'sent'; }).sort(function (a, b) { return a.period < b.period ? 1 : -1; });
+  const groups = deskLib.reportGroupsFor(c.services);
+  const visibleProjects = projects.filter(function (p) { return String(p.name || '').trim().toLowerCase() !== 'general to-dos'; })
+    .sort(function (a, b) { return (a.status === 'done' ? 1 : 0) - (b.status === 'done' ? 1 : 0) || (a.created_at < b.created_at ? -1 : 1); });
+  const latestHealth = sent.find(function (r) { return r.metrics && typeof r.metrics.health_score === 'number'; });
+  const prevHealth = latestHealth && sent.find(function (r) { return r.period < latestHealth.period && r.metrics && typeof r.metrics.health_score === 'number'; });
+  return json(res, 200, {
+    client: { name: name, contact: c.name || '', email: c.email || '' },
+    files_limit: fileLimitText(),
+    metric_groups: deskLib.METRIC_GROUPS.filter(function (g) { return groups.indexOf(g.key) >= 0; }).map(function (g) { return { key: g.key, label: g.label, metrics: g.metrics }; }),
+    reports: sent.map(function (r) {
+      return { id: r.id, period: r.period, label: monthLabel(r.period), metrics: r.metrics || {}, summary: r.summary || '', wins: r.wins || '', next_actions: r.next_actions || '', sent_at: r.sent_at || '' };
+    }),
+    projects: visibleProjects.map(function (p) {
+      return { id: p.id, name: p.name, status: p.status || 'planned', due: p.due || '', start: p.start || '', description: p.description || '',
+        tasks: tasks.filter(function (t) { return t.project_id === p.id; }).sort(function (a, b) { return (a.position || 0) - (b.position || 0) || (a.created_at < b.created_at ? -1 : 1); })
+          .map(function (t) { return { title: t.title, done: Boolean(t.done), due: t.due || '' }; }) };
+    }),
+    files: shared.map(function (f) { return { id: f.id, name: f.name, mime: f.mime || '', size: f.size || 0, category: f.category || 'other', created_at: f.created_at, uploaded_by: f.uploaded_by === 'client' ? 'client' : 'aethera' }; }),
+    approvals: approvals.sort(function (a, b) { return (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1) || (a.created_at < b.created_at ? 1 : -1); }).map(function (a) {
+      const f = a.file_id && fileById[a.file_id];
+      return { id: a.id, title: a.title, kind: a.kind || 'approval', status: a.status || 'pending', requested: a.requested || '', decided: a.decided || '',
+        comment: a.client_comment || '', file: f ? { id: f.id, name: f.name, size: f.size || 0 } : null };
+    }),
+    health: latestHealth ? { score: latestHealth.metrics.health_score, period: latestHealth.period, change: prevHealth ? latestHealth.metrics.health_score - prevHealth.metrics.health_score : null } : null,
+    activity: activity.map(function (e) { return activityRow(e, name); })
+  });
+}
+
+// ----- billing: the client's own Stripe invoices, matched by the email on file -----
+async function clientCustomers(c) {
+  if (!SECRET || !portalEmailOf(c)) return [];
+  const r = await stripe('GET', '/v1/customers', { email: portalEmailOf(c), limit: 10 });
+  return r.data || [];
+}
+async function ownedInvoice(c, id, expand) {
+  if (!INVOICE_ID_RE.test(id)) return null;
+  const ids = (await clientCustomers(c)).map(function (x) { return x.id; });
+  let inv;
+  try { inv = await stripe('GET', '/v1/invoices/' + encodeURIComponent(id), expand ? { expand: expand } : null); } catch (e) { if (e.status === 404) return null; throw e; }
+  return inv && ids.indexOf(inv.customer) >= 0 && inv.status !== 'draft' ? inv : null;
+}
+function portalInvoice(inv) {
+  const now = Date.now() / 1000;
+  const lines = (inv.lines && inv.lines.data) || [];
+  const status = inv.status === 'open' && inv.due_date && inv.due_date < now ? 'overdue' : inv.status;
+  return { id: inv.id, number: inv.number || '', description: inv.description || (lines[0] && lines[0].description) || 'Invoice', status: status,
+    issued: dateText(inv.effective_at || inv.created), due: dateText(inv.due_date), created: inv.created,
+    total: inv.total, remaining: inv.amount_remaining, currency: inv.currency, total_text: money(inv.total, inv.currency), remaining_text: money(inv.amount_remaining, inv.currency),
+    paid_on: inv.status_transitions && inv.status_transitions.paid_at ? dateText(inv.status_transitions.paid_at) : '',
+    payable: inv.status === 'open' && inv.amount_remaining > 0, pdf: Boolean(inv.invoice_pdf) };
+}
+function methodOf(pm) {
+  if (!pm || typeof pm !== 'object') return null;
+  if (pm.card) return { type: 'card', brand: pm.card.brand || 'card', last4: pm.card.last4 || '', exp: pm.card.exp_month ? String(pm.card.exp_month).padStart(2, '0') + '/' + String(pm.card.exp_year).slice(-2) : '' };
+  if (pm.us_bank_account) return { type: 'bank', brand: pm.us_bank_account.bank_name || 'Bank account', last4: pm.us_bank_account.last4 || '', exp: '' };
+  return { type: pm.type || 'other', brand: pm.type || 'Payment method', last4: '', exp: '' };
+}
+async function portalBilling(req, res, s) {
+  if (!SECRET) return json(res, 200, { enabled: false, invoices: [], method: null });
+  try {
+    const customers = await clientCustomers(s.client);
+    const invoices = [];
+    for (const cu of customers) {
+      const list = await stripe('GET', '/v1/invoices', { customer: cu.id, limit: 50 });
+      (list.data || []).forEach(function (inv) { if (inv.status !== 'draft') invoices.push(portalInvoice(inv)); });
+    }
+    invoices.sort(function (a, b) { return b.created - a.created; });
+    let method = null;
+    if (customers[0]) {
+      const full = await stripe('GET', '/v1/customers/' + encodeURIComponent(customers[0].id), { expand: ['invoice_settings.default_payment_method'] });
+      method = methodOf(full.invoice_settings && full.invoice_settings.default_payment_method);
+    }
+    const open = invoices.filter(function (i) { return i.payable; });
+    return json(res, 200, { enabled: Boolean(PUBLISHABLE), test_mode: !LIVE, invoices: invoices, method: method,
+      balance_text: money(open.reduce(function (t, i) { return t + i.remaining; }, 0), 'usd'), open_count: open.length });
+  } catch (e) {
+    console.error('portal_billing_failed', e.status, e.message);
+    return json(res, 502, { error: 'We couldn’t load your invoices right now. Please try again.' });
+  }
+}
+async function portalPay(req, res, s, id) {
+  const inv = await ownedInvoice(s.client, id, ['confirmation_secret']);
+  if (!inv) return json(res, 404, { error: 'We couldn’t find that invoice.' });
+  if (!(inv.status === 'open' && inv.amount_remaining > 0 && inv.confirmation_secret && inv.confirmation_secret.client_secret)) return json(res, 409, { error: 'This invoice can’t be paid online. It may already be paid.' });
+  return json(res, 200, { clientSecret: inv.confirmation_secret.client_secret, number: inv.number || '', amount_text: money(inv.amount_remaining, inv.currency), email: inv.customer_email || '' });
+}
+async function portalPaid(req, res, s, id) {
+  const inv = await ownedInvoice(s.client, id);
+  if (!inv) return json(res, 404, { error: 'We couldn’t find that invoice.' });
+  await clientAudit(req, s, 'billing', inv.status === 'paid' ? 'Paid invoice' : 'Payment submitted', (inv.number || inv.id) + ' · ' + money(inv.status === 'paid' ? inv.amount_paid : inv.amount_remaining, inv.currency) + (inv.status === 'paid' ? '' : ' · processing'));
+  return json(res, 200, { invoice: portalInvoice(inv) });
+}
+async function portalInvoicePdf(req, res, s, id) {
+  const inv = await ownedInvoice(s.client, id);
+  if (!inv || !inv.invoice_pdf) return json(res, 404, { error: 'We couldn’t find that invoice.' });
+  await clientAudit(req, s, 'billing', inv.status === 'paid' ? 'Downloaded receipt' : 'Downloaded invoice', (inv.number || inv.id) + ' · ' + money(inv.total, inv.currency));
+  return send(res, 302, '', { Location: inv.invoice_pdf, 'Cache-Control': 'no-store' });
+}
+async function portalSetupMethod(req, res, s) {
+  let cu = (await clientCustomers(s.client))[0];
+  if (!cu) cu = await findOrCreateCustomer(portalEmailOf(s.client), s.client.name || '', s.client.company || '', 'client_portal');
+  const si = await stripe('POST', '/v1/setup_intents', { customer: cu.id, payment_method_types: PAYMENT_METHOD_TYPES, usage: 'off_session', metadata: { source: 'client_portal', desk_client: s.client.id } });
+  return json(res, 200, { clientSecret: si.client_secret });
+}
+async function portalConfirmMethod(req, res, s) {
+  const body = await readJson(req, 1024);
+  const id = clip(body && body.setup_intent, 80);
+  if (!/^seti_[A-Za-z0-9]+$/.test(id)) return json(res, 400, { error: 'Invalid request.' });
+  const si = await stripe('GET', '/v1/setup_intents/' + encodeURIComponent(id), { expand: ['payment_method'] });
+  const ids = (await clientCustomers(s.client)).map(function (x) { return x.id; });
+  if (ids.indexOf(si.customer) < 0) return json(res, 404, { error: 'Not found.' });
+  if (si.status !== 'succeeded' || !si.payment_method) return json(res, 409, { error: si.status === 'processing' ? 'Your bank account is still being verified. We’ll use it once that finishes.' : 'That payment method wasn’t saved. Please try again.' });
+  await stripe('POST', '/v1/customers/' + encodeURIComponent(si.customer), { invoice_settings: { default_payment_method: si.payment_method.id } });
+  const m = methodOf(si.payment_method);
+  await clientAudit(req, s, 'billing', 'Updated payment method', m ? (m.brand + (m.last4 ? ' •••• ' + m.last4 : '')) : '');
+  return json(res, 200, { method: m });
+}
+
+async function portalApi(req, res, url) {
+  const p = url.pathname.replace(/^\/api\/portal/, '') || '/';
+  const m = req.method;
+  try { await portalInit(); } catch (e) {
+    console.error('portal_db_unavailable', e.message);
+    return json(res, 503, { error: 'The portal is unavailable right now. Please try again shortly.' });
+  }
+  if (p === '/login' && m === 'POST') return portalLogin(req, res);
+  if (p === '/verify' && m === 'POST') return portalVerify(req, res);
+  const s = await portalSession(req);
+  if (p === '/session' && m === 'GET') return json(res, 200, { signed_in: Boolean(s), name: s ? clientName(s.client) : null });
+  if (!s) return json(res, 401, { error: 'Please sign in.' }, { 'Set-Cookie': clientCookie(req, '', 0) });
+  if (m !== 'GET' && !sameOrigin(req)) return json(res, 403, { error: 'Forbidden' });
+  if (limited(req, 240, 'portal')) return json(res, 429, { error: 'Too many requests. Please wait a minute.' });
+
+  if (p === '/logout' && m === 'POST') {
+    await portal.endSession(s.hash);
+    await clientAudit(req, s, 'signin', 'Signed out', 'Session ended');
+    return json(res, 200, { ok: true }, { 'Set-Cookie': clientCookie(req, '', 0) });
+  }
+  if (p === '/data' && m === 'GET') return portalData(req, res, s);
+  if (p === '/event' && m === 'POST') {
+    const body = await readJson(req, 1024);
+    if (body && body.type === 'report_view' && /^rep_/.test(String(body.id || ''))) {
+      const r = await desk.get('report', body.id);
+      if (r && r.client_id === s.client.id && r.status === 'sent') await clientAudit(req, s, 'report', 'Viewed report', monthLabel(r.period) + ' monthly report');
+    }
+    return json(res, 200, { ok: true });
+  }
+
+  // files: download a shared file, upload a new one (shared back to Aethera)
+  let mm = p.match(/^\/files\/(fil_[A-Za-z0-9_-]+)$/);
+  if (mm && m === 'GET') {
+    const f = await desk.getFileMeta(mm[1]);
+    if (!f || f.client_id !== s.client.id || !f.shared) return json(res, 404, { error: 'File not found.' });
+    await clientAudit(req, s, 'file', 'Downloaded file', f.name);
+    return sendStoredFile(res, f);
+  }
+  if (p === '/files' && m === 'POST') {
+    if (limited(req, 30, 'portal-upload')) return json(res, 429, { error: 'Too many uploads. Please wait a minute.' });
+    const name = clip(url.searchParams.get('name') || 'file', 200).replace(/[\\/\0\r\n"]/g, '_');
+    let content;
+    try { content = await readRaw(req, fileLimit()); } catch (e) { return json(res, 413, { error: 'Files can be up to ' + fileLimitText() + '.' }); }
+    if (!content.length) return json(res, 400, { error: 'That file is empty.' });
+    const mime = clip(String(req.headers['content-type'] || 'application/octet-stream').split(';')[0], 100);
+    const f = await storeFile({ client_id: s.client.id, name: name, mime: mime, category: 'other', content: content, shared: true, uploaded_by: 'client' });
+    await clientAudit(req, s, 'file', 'Uploaded file', name);
+    return json(res, 200, { file: { id: f.id, name: f.name, mime: f.mime, size: f.size, category: f.category, created_at: f.created_at, uploaded_by: 'client' } });
+  }
+
+  // approvals: approve, request changes (with a note), or mark an access request done
+  mm = p.match(/^\/approvals\/(app_[A-Za-z0-9_-]+)$/);
+  if (mm && m === 'POST') {
+    const a = await desk.get('approval', mm[1]);
+    if (!a || a.client_id !== s.client.id) return json(res, 404, { error: 'Not found.' });
+    if ((a.status || 'pending') !== 'pending') return json(res, 409, { error: 'This item has already been decided.' });
+    const body = await readJson(req, 8192) || {};
+    const comment = clip(body.comment, 3000);
+    const update = { decided: deskLib.localDate(), decided_by: clientName(s.client) + ' (portal)' };
+    let event;
+    if (body.action === 'approve') { update.status = 'approved'; event = a.kind === 'decision' ? 'Approved decision' : a.kind === 'access' ? 'Completed access request' : 'Approved'; }
+    else if (body.action === 'changes') {
+      if (!comment) return json(res, 400, { error: 'Tell us what should change.' });
+      update.status = 'changes'; event = 'Requested changes';
+    } else return json(res, 400, { error: 'Invalid request.' });
+    if (comment) update.client_comment = comment;
+    const item = await desk.update('approval', a.id, update);
+    await clientAudit(req, s, 'approval', event, a.title + (comment ? ' · “' + comment.slice(0, 200) + '”' : ''));
+    return json(res, 200, { approval: { id: item.id, status: item.status, decided: item.decided, comment: item.client_comment || '' } });
+  }
+
+  // billing
+  if (p === '/billing' && m === 'GET') return portalBilling(req, res, s);
+  if (!SECRET) return json(res, 503, { error: 'Payments are not configured yet.' });
+  try {
+    mm = p.match(/^\/invoices\/(in_[A-Za-z0-9]+)\/(pay|paid|pdf)$/);
+    if (mm && mm[2] === 'pay' && m === 'POST') return await portalPay(req, res, s, mm[1]);
+    if (mm && mm[2] === 'paid' && m === 'POST') return await portalPaid(req, res, s, mm[1]);
+    if (mm && mm[2] === 'pdf' && m === 'GET') return await portalInvoicePdf(req, res, s, mm[1]);
+    if (p === '/payment-method/setup' && m === 'POST') return await portalSetupMethod(req, res, s);
+    if (p === '/payment-method/confirm' && m === 'POST') return await portalConfirmMethod(req, res, s);
+  } catch (e) {
+    console.error('portal_billing_action_failed', p, e.status, e.message);
+    return json(res, 502, { error: 'Something went wrong with that payment request. Please try again.' });
+  }
+  return json(res, 404, { error: 'Not found' });
+}
+
+// ----- Desk side: portal access per client, invites, sign-out, file sharing and the audit log -----
+async function portalAdmin(req, res, p, m, url) {
+  let mm = p.match(/^\/portal\/(cli_[A-Za-z0-9_-]+)(?:\/(access|invite|signout))?$/);
+  if (mm) {
+    await portalInit();
+    const c = await desk.get('client', mm[1]);
+    if (!c) return json(res, 404, { error: 'Client not found.' });
+    const status = async function () {
+      return { enabled: Boolean(c.portal_access), open: portalOpen(c), email: c.email || '', host: CLIENT_HOST, email_ready: Boolean(NOTIFY_URL), storage: r2.enabled ? 'r2' : 'database',
+        last_sign_in: await portal.lastSignIn(c.id), sessions: await portal.sessionInfo(c.id) };
+    };
+    if (!mm[2] && m === 'GET') return json(res, 200, await status());
+    if (mm[2] === 'access' && m === 'POST') {
+      const body = await readJson(req, 1024) || {};
+      const on = body.enabled === true;
+      if (on) {
+        if (!EMAIL_RE.test(portalEmailOf(c))) return json(res, 400, { error: 'Add the client’s email first. It’s their portal login.' });
+        const clash = (await desk.allOf('client')).find(function (x) { return x.id !== c.id && x.portal_access && portalEmailOf(x) === portalEmailOf(c); });
+        if (clash) return json(res, 409, { error: 'Another client (' + clientName(clash) + ') already uses this email for portal access. Each client needs its own login email.' });
+      }
+      await desk.update('client', c.id, { portal_access: on });
+      c.portal_access = on;
+      if (!on) await portal.endAllSessions(c.id);
+      await adminAudit(req, c.id, 'account', on ? 'Portal access turned on' : 'Portal access turned off', on ? 'Login email ' + portalEmailOf(c) : 'All sessions signed out');
+      return json(res, 200, await status());
+    }
+    if (mm[2] === 'invite' && m === 'POST') {
+      if (!portalOpen(c)) return json(res, 400, { error: 'Turn on portal access first.' });
+      try { await sendPortalLink(req, c, true); } catch (e) { return json(res, e.status || 502, { error: e.status ? e.message : 'Couldn’t send the email. Please try again.' }); }
+      await adminAudit(req, c.id, 'account', 'Portal invite sent', 'Sign-in link emailed to ' + portalEmailOf(c));
+      return json(res, 200, await status());
+    }
+    if (mm[2] === 'signout' && m === 'POST') {
+      const n = await portal.endAllSessions(c.id);
+      await adminAudit(req, c.id, 'security', 'Signed out everywhere', n + ' session' + (n === 1 ? '' : 's') + ' ended by Aethera');
+      return json(res, 200, await status());
+    }
+    return json(res, 405, { error: 'Method not allowed' });
+  }
+  if (p === '/audit' && m === 'GET') {
+    await portalInit();
+    const sp = url.searchParams;
+    const cat = portalLib.CATEGORIES.indexOf(sp.get('category')) >= 0 ? sp.get('category') : '';
+    const csv = sp.get('format') === 'csv';
+    const rows = await portal.audit({ client_id: /^cli_/.test(sp.get('client_id') || '') ? sp.get('client_id') : '', category: cat, flagged: sp.get('flagged') === '1',
+      q: clip(sp.get('q'), 100), limit: csv ? 5000 : Number(sp.get('limit')) || 300 });
+    const clients = await desk.allOf('client');
+    const names = {}; clients.forEach(function (c) { names[c.id] = clientName(c); });
+    const out = rows.map(function (e) {
+      return { id: e.id, at: e.at, client_id: e.client_id, client: names[e.client_id] || (e.client_id ? 'Deleted client' : ''), category: e.category, event: e.event, detail: e.detail || '',
+        actor: e.actor_type === 'client' ? (names[e.client_id] || e.actor || 'Client') : (e.actor || (e.actor_type === 'admin' ? 'Aethera team' : 'System')), actor_type: e.actor_type,
+        ip: e.ip || '', device: e.device || '', flagged: Boolean(e.flagged) };
+    });
+    if (csv) {
+      const cell = function (v) { v = String(v == null ? '' : v); if (/^[=+\-@\t\r]/.test(v)) v = "'" + v; return '"' + v.replace(/"/g, '""') + '"'; };
+      const lines = [['When (UTC)', 'Client', 'Category', 'Event', 'Details', 'Actor', 'IP', 'Device', 'Needs review'].map(cell).join(',')]
+        .concat(out.map(function (e) { return [e.at, e.client, e.category, e.event, e.detail, e.actor, e.ip, e.device, e.flagged ? 'yes' : ''].map(cell).join(','); }));
+      return send(res, 200, lines.join('\r\n'), { 'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Disposition': 'attachment; filename="aethera-portal-audit-' + deskLib.localDate() + '.csv"' });
+    }
+    return json(res, 200, { items: out, clients: clients.filter(function (c) { return c.portal_access; }).map(function (c) { return { id: c.id, name: clientName(c) }; }) });
+  }
+  return null;
+}
+
 // ---------- Stripe webhook ----------
 // Stripe signs every event: header "t=<unix>,v1=<hex hmac>" over "<t>.<raw body>" with the endpoint secret.
 function verifyStripeSignature(raw, header, secret, nowSec) {
@@ -1807,6 +2264,18 @@ function markHandled(id) {
   if (handledEvents.size > 2000) handledEvents.delete(handledEvents.keys().next().value);
 }
 
+// Payments that clear (cards right away, bank payments days later) go into the paying client's activity log.
+async function auditInvoicePaid(event) {
+  const o = (event.data && event.data.object) || {};
+  const email = String(o.customer_email || '').trim().toLowerCase();
+  if (!email) return;
+  try {
+    await portalInit();
+    const c = (await desk.allOf('client')).find(function (x) { return portalEmailOf(x) === email; });
+    if (c) await audit(null, { client_id: c.id, actor_type: 'system', actor: 'Stripe', category: 'billing', event: 'Payment received', detail: (o.number || o.id) + ' · ' + money(o.amount_paid, o.currency) });
+  } catch (e) { console.error('audit_invoice_paid_failed', e.message); }
+}
+
 async function stripeWebhook(req, res) {
   if (!WEBHOOK_SECRET) return json(res, 503, { error: 'Webhook not configured.' });
   let raw;
@@ -1829,6 +2298,7 @@ async function stripeWebhook(req, res) {
     }
   }
   const rec = summarizeEvent(event);
+  if (event.type === 'invoice.paid') await auditInvoicePaid(event);
   if (rec) {
     console.log('stripe_event ' + JSON.stringify(rec));
     try {
@@ -1914,10 +2384,21 @@ const server = http.createServer(async function (req, res) {
       }
       return send(res, 302, '', { Location: 'https://' + PUBLIC_DOMAIN + p + (url.search || '') });
     }
-    // aetheradigital.com: no admin here.
+    // client.aetheradigital.com: the client portal at "/", its API and shared assets; everything else goes to the public site.
+    if (site === 'client') {
+      if (p.startsWith('/api/portal/')) return await portalApi(req, res, url);
+      if (p === '/api/config') return config(req, res);
+      if (p === '/' || p === '/index.html' || p === '/login') return serveStatic(req, res, new URL('/client/', 'http://localhost'));
+      if (p === '/client' || p.startsWith('/client/')) return send(res, 301, '', { Location: '/' });
+      if (p === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n', { 'Content-Type': 'text/plain; charset=utf-8' });
+      if (p.startsWith('/assets/')) return serveStatic(req, res, url);
+      return send(res, 302, '', { Location: 'https://' + PUBLIC_DOMAIN + p + (url.search || '') });
+    }
+    // aetheradigital.com: no admin or portal API here.
     if (site === 'public') {
       if (p === '/admin' || p.startsWith('/admin/')) return send(res, 301, '', { Location: 'https://' + ADMIN_HOST + '/' });
-      if (p.startsWith('/api/admin/')) return json(res, 404, { error: 'Not found' });
+      if (p === '/client' || p.startsWith('/client/')) return send(res, 301, '', { Location: 'https://' + CLIENT_HOST + '/' });
+      if (p.startsWith('/api/admin/') || p.startsWith('/api/portal/')) return json(res, 404, { error: 'Not found' });
     }
 
     if (p === '/api/config' && req.method === 'GET') return config(req, res);
@@ -1929,6 +2410,7 @@ const server = http.createServer(async function (req, res) {
     if (p === '/api/quote/decline' && req.method === 'POST') return await quoteDecline(req, res);
     if (p === '/api/stripe/webhook' && req.method === 'POST') return await stripeWebhook(req, res);
     if (p.startsWith('/api/collector/')) return await collectorApi(req, res, url);
+    if (p.startsWith('/api/portal/')) return await portalApi(req, res, url);
     if (p.startsWith('/api/admin/')) return await adminApi(req, res, url);
     if (p.startsWith('/api/')) return json(res, 404, { error: 'Not found' });
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });
