@@ -3,7 +3,7 @@
   'use strict';
   var D = window.Desk;
   var h = D.h, btn = D.btn, desk = D.desk, toast = D.toast, day = D.day;
-  var CAT = { signin: ['Sign-in', '#C8B6FF'], security: ['Security', '#FFB3B3'], file: ['File', '#FFC4A8'], approval: ['Approval', '#FFB3D1'], report: ['Report', '#AFCBFF'], billing: ['Billing', '#CFE8B4'], account: ['Account', '#C9C9D1'] };
+  var CAT = { signin: ['Sign-in', '#C8B6FF'], security: ['Security', '#FFB3B3'], file: ['File', '#FFC4A8'], approval: ['Approval', '#FFB3D1'], report: ['Report', '#AFCBFF'], quote: ['Quote', '#F6E7A1'], billing: ['Billing', '#CFE8B4'], account: ['Account', '#C9C9D1'] };
   function stamp(iso) { return iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'; }
 
   // Panel on a client's Overview tab.

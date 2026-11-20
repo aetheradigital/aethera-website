@@ -91,7 +91,7 @@ main{max-width:1240px;margin:0 auto;padding:48px clamp(20px,5vw,72px) 72px;displ
 
 /* grids & cards */
 .grid{display:grid;gap:16px}
-.g4{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(205px,1fr))}
 .g2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
 .gfiles{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
 .stat{display:flex;flex-direction:column;gap:14px}
@@ -125,6 +125,9 @@ main{max-width:1240px;margin:0 auto;padding:48px clamp(20px,5vw,72px) 72px;displ
 .badge.open,.badge.in_progress,.badge.review{background:rgba(175,203,255,.16);color:var(--sky)}
 .badge.paid,.badge.approved,.badge.done{background:rgba(207,232,180,.16);color:var(--sage)}
 .badge.overdue{background:rgba(255,179,179,.14);color:var(--err)}
+.badge.sent,.badge.viewed{background:rgba(246,231,161,.16);color:#F6E7A1}
+.badge.accepted{background:rgba(207,232,180,.16);color:var(--sage)}
+.badge.expired{background:rgba(255,255,255,.08);color:#C9C9D1}
 .badge.pending,.badge.planned{background:rgba(255,196,168,.16);color:var(--peach)}
 .badge.changes{background:rgba(255,179,209,.16);color:var(--pink)}
 .badge.void,.badge.uncollectible,.badge.declined,.badge.on_hold,.badge.neutral{background:rgba(255,255,255,.08);color:#C9C9D1}

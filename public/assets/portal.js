@@ -3,7 +3,7 @@
   'use strict';
   var app = document.getElementById('app');
   var WORDMARK = '/assets/wordmark.png';
-  var CAT_COLOR = { signin: '#C8B6FF', security: '#FFB3B3', file: '#FFC4A8', approval: '#FFB3D1', report: '#AFCBFF', billing: '#CFE8B4', account: '#C9C9D1' };
+  var CAT_COLOR = { signin: '#C8B6FF', security: '#FFB3B3', file: '#FFC4A8', approval: '#FFB3D1', report: '#AFCBFF', quote: '#F6E7A1', billing: '#CFE8B4', account: '#C9C9D1' };
   var METRIC = {
     seo_clicks: ['Search clicks', 'n', 1], seo_impressions: ['Search impressions', 'n', 1], seo_avg_position: ['Avg. search position', 'p', -1],
     sessions: ['Website visits', 'n', 1], leads: ['Leads', 'n', 1], revenue: ['Attributed revenue', '$', 1],
@@ -12,7 +12,7 @@
     health_score: ['Digital Health score', 'n', 1], seo_score: ['SEO score', 'n', 1], aiso_score: ['AI search score', 'n', 1]
   };
   var CHART_PREF = ['leads', 'sessions', 'seo_clicks', 'ad_conversions', 'social_engagement', 'health_score'];
-  var TABS = [['overview', 'Overview'], ['reports', 'Reports'], ['projects', 'Projects'], ['files', 'Files'], ['billing', 'Billing'], ['activity', 'Activity']];
+  var TABS = [['overview', 'Overview'], ['reports', 'Reports'], ['projects', 'Projects'], ['files', 'Files'], ['quotes', 'Quotes'], ['billing', 'Billing'], ['activity', 'Activity']];
 
   var S = { data: null, billing: null, billingErr: null, tab: 'overview', report: null, chartMetric: null, fileFilter: 'all', logFilter: 'all', viewed: {}, changing: null };
 
@@ -83,7 +83,8 @@
   function tileColor(e) { return { PDF: '#FFC4A8', PNG: '#C8B6FF', JPG: '#C8B6FF', JPEG: '#C8B6FF', SVG: '#C8B6FF', WEBP: '#C8B6FF', ZIP: '#AFCBFF', DOC: '#CFE8B4', DOCX: '#CFE8B4', XLS: '#CFE8B4', XLSX: '#CFE8B4', CSV: '#CFE8B4', MP4: '#FFB3D1', MOV: '#FFB3D1' }[e] || '#E4E4EA'; }
   function lines(text) { return String(text || '').split(/\n+/).map(function (l) { return l.replace(/^\s*(?:[•\-*]|\d+[.)])\s*/, '').trim(); }).filter(Boolean); }
   var STATUS_LABEL = { planned: 'Planned', in_progress: 'In progress', review: 'In review', done: 'Done', on_hold: 'On hold', pending: 'Awaiting you', approved: 'Approved', changes: 'Changes requested', declined: 'Declined',
-    open: 'Open', overdue: 'Overdue', paid: 'Paid', void: 'Void', uncollectible: 'Uncollectible' };
+    open: 'Open', overdue: 'Overdue', paid: 'Paid', void: 'Void', uncollectible: 'Uncollectible',
+    sent: 'Ready to sign', viewed: 'Ready to sign', accepted: 'Signed', expired: 'Expired' };
   function badge(s) { return h('span', { class: 'badge ' + s, text: STATUS_LABEL[s] || s }); }
 
   // ---------- sign in ----------
@@ -159,7 +160,7 @@
   function refreshShell() { if (S.data && app.querySelector('.top')) route(); }
   function counts() {
     var d = S.data; var b = S.billing;
-    return { files: d.approvals.filter(function (a) { return a.status === 'pending'; }).length, billing: b ? b.open_count : 0 };
+    return { files: d.approvals.filter(function (a) { return a.status === 'pending'; }).length, quotes: (d.quotes || []).filter(awaitingQuote).length, billing: b ? b.open_count : 0 };
   }
   function route() {
     var tab = (location.hash.replace(/^#\/?/, '').split(/[/?]/)[0]) || 'overview';
@@ -175,7 +176,7 @@
       nav,
       h('div', { class: 'who' }, h('span', { class: 'avatar', 'aria-hidden': 'true', text: initials(d.client.name) }), h('span', { class: 'name', text: d.client.name }),
         h('button', { class: 'pill ghost small', type: 'button', text: 'Sign out', onclick: signOut }))));
-    var view = { overview: overview, reports: reports, projects: projects, files: files, billing: billing, activity: activity }[tab]();
+    var view = { overview: overview, reports: reports, projects: projects, files: files, quotes: quotes, billing: billing, activity: activity }[tab]();
     var foot = h('footer', { class: 'foot' }, h('p', null, '© ' + new Date().getFullYear() + ' Aethera Digital · Questions? ', h('a', { href: 'mailto:hello@aetheradigital.com', text: 'hello@aetheradigital.com' })),
       S.billing && S.billing.test_mode ? h('span', { class: 'testbar', text: 'Test mode · no real charges' }) : null);
     var y = window.scrollY;
@@ -213,6 +214,14 @@
       h('p', { class: 'big', text: String(pending.length) }),
       h('p', { class: 'sub', text: pending.length ? (pending.length === 1 ? 'item needs your review' : 'items need your review') : 'Nothing needs you right now' }),
       h('div', { class: 'act' }, h('a', { class: 'pill ghost small', href: '#files', text: pending.length ? 'Review now' : 'Open files' }))));
+    var toSign = (d.quotes || []).filter(awaitingQuote);
+    if (toSign.length) {
+      var q0 = toSign[0];
+      cards.push(h('div', { class: 'card hov stat' }, h('p', { class: 'eyebrow', text: toSign.length === 1 ? 'Quote ready to sign' : toSign.length + ' quotes ready to sign' }),
+        h('p', { class: 'big', style: 'font-size:34px', text: q0.total_text || q0.monthly_text || q0.number }),
+        h('p', { class: 'sub', text: q0.title + (q0.valid_until ? ' · valid through ' + day(q0.valid_until) : '') }),
+        h('div', { class: 'act' }, h('a', { class: 'pill small', href: '#quotes', text: 'Review quote' }))));
+    }
     if (latest) {
       var key = chartKey(latest);
       var series = key ? seriesFor(key) : [];
@@ -228,7 +237,7 @@
       var ring = document.createElement('span');
       ring.innerHTML = '<svg width="84" height="84" viewBox="0 0 84 84" role="img" aria-label="Digital Health score ' + Math.round(d.health.score) + ' out of 100"><circle cx="42" cy="42" r="34" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="8"/><circle cx="42" cy="42" r="34" fill="none" stroke="#CFE8B4" stroke-width="8" stroke-linecap="round" stroke-dasharray="' + dash.toFixed(1) + ' 213.6" transform="rotate(-90 42 42)"/><text x="42" y="48" text-anchor="middle" fill="#fff" font-family="Raleway, sans-serif" font-size="22" font-weight="300">' + Math.round(d.health.score) + '</text></svg>';
       cards.push(h('div', { class: 'card hov stat' }, h('p', { class: 'eyebrow', text: 'Digital Health score' }),
-        h('div', { class: 'ring' }, ring.firstChild, h('p', { text: 'How ready your site is for search engines and AI assistants.' + (d.health.change ? ' ' + (d.health.change > 0 ? 'Up ' : 'Down ') + Math.abs(Math.round(d.health.change)) + ' points since last month.' : '') }))));
+        h('div', { class: 'ring' }, ring.firstChild, h('p', { text: 'Search and AI readiness.' + (d.health.change ? ' ' + (d.health.change > 0 ? 'Up ' : 'Down ') + Math.abs(Math.round(d.health.change)) + ' since last month.' : '') }))));
     }
     var active = d.projects.filter(function (p) { return p.status !== 'done'; });
     return h('div', { class: 'view' },
@@ -405,6 +414,30 @@
       h('p', { class: 'note', style: 'justify-content:flex-start' }, icon('lock', 14), 'Files are stored privately. Download links are created for you and expire after 10 minutes.'));
   }
 
+  // ---------- quotes ----------
+  function awaitingQuote(q) { return q.state === 'sent' || q.state === 'viewed'; }
+  function quotes() {
+    var list = S.data.quotes || [];
+    return h('div', { class: 'view' },
+      head('Proposals', h('h1', null, 'Your ', h('em', { text: 'quotes' }), '.'),
+        h('p', { text: 'Review the scope, choose any add-ons, read the terms and sign online. Signed copies are saved under Files.' })),
+      list.length ? h('div', { class: 'grid g2' }, list.map(function (q) {
+        var waiting = awaitingQuote(q);
+        var amount = [q.total_text, q.monthly_text].filter(Boolean).join(' + ');
+        var meta = q.state === 'accepted' ? 'Signed ' + day(q.signed_at) + (q.signed_by ? ' by ' + q.signed_by : '')
+          : q.state === 'declined' ? 'Declined ' + day(q.declined_at)
+          : q.state === 'expired' ? 'Expired ' + day(q.valid_until)
+          : (q.sent_at ? 'Sent ' + day(q.sent_at) : '') + (q.valid_until ? ' · valid through ' + day(q.valid_until) : '');
+        return h('div', { class: 'card hov', style: 'display:flex;flex-direction:column;gap:16px' },
+          h('div', { class: 'ptitle', style: 'align-items:flex-start' }, h('div', null, h('p', { class: 'eyebrow', style: 'margin-bottom:8px', text: 'Quote ' + q.number }), h('h2', { style: 'font-size:28px', text: q.title })),
+            h('span', { style: 'flex:none' }, badge(q.state === 'viewed' ? 'sent' : q.state))),
+          amount ? h('p', { style: 'margin:0;font-family:Raleway,sans-serif;font-weight:300;font-size:40px;line-height:1', text: amount }) : null,
+          h('p', { class: 'mute', style: 'margin:0;font-size:14px', text: meta }),
+          h('div', { class: 'acts' }, h('a', { class: 'pill small' + (waiting ? '' : ' ghost'), href: '/api/portal/quotes/' + encodeURIComponent(q.id), target: '_blank', rel: 'noopener',
+            onclick: function () { setTimeout(refreshData, 4000); } }, waiting ? 'Review & sign' : q.state === 'accepted' ? 'View signed quote' : 'View quote', icon('arrow'))));
+      })) : h('div', { class: 'card emptycard' }, h('p', { class: 'empty', text: 'Quotes we send you will appear here.' })));
+  }
+
   // ---------- billing ----------
   var stripeP = null;
   function stripeReady() {
@@ -514,12 +547,12 @@
   // ---------- activity ----------
   function activity() {
     var d = S.data;
-    var groups = { signin: ['signin', 'security'], file: ['file', 'approval'], billing: ['billing'], report: ['report'] };
+    var groups = { signin: ['signin', 'security'], file: ['file', 'approval'], quote: ['quote'], billing: ['billing'], report: ['report'] };
     var rows = d.activity.filter(function (e) { return S.logFilter === 'all' || (groups[S.logFilter] || []).indexOf(e.category) >= 0; });
     return h('div', { class: 'view' },
       head('Activity log', h('h1', null, 'Every action, ', h('em', { text: 'recorded' }), '.'),
         h('p', null, 'Sign-ins, downloads, approvals and payments on your account. If something looks unfamiliar, email ', h('a', { href: 'mailto:hello@aetheradigital.com', text: 'hello@aetheradigital.com' }), '.')),
-      h('div', { class: 'chips' }, [['all', 'All'], ['signin', 'Sign-ins & security'], ['file', 'Files & approvals'], ['billing', 'Billing'], ['report', 'Reports']].map(function (c) {
+      h('div', { class: 'chips' }, [['all', 'All'], ['signin', 'Sign-ins & security'], ['file', 'Files & approvals'], ['quote', 'Quotes'], ['billing', 'Billing'], ['report', 'Reports']].map(function (c) {
         return h('button', { class: 'chip', type: 'button', 'aria-pressed': String(S.logFilter === c[0]), text: c[1], onclick: function () { S.logFilter = c[0]; route(); } });
       })),
       h('div', { class: 'card flush' }, rows.length ? h('div', { class: 'scroll' }, h('table', { class: 'tbl' },
