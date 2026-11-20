@@ -33,6 +33,18 @@ Add `aetheradigital.com`, `www.aetheradigital.com` and `admin.aetheradigital.com
 3. The Desk matches each item to clients (email domains, extra addresses, business names and the client's "Also match" field), sends only matched items to Claude, and saves the action items as suggestions.
 4. Suggestions appear on the overview and on each client page with Add (to "General to-dos" or a chosen project) and Dismiss. Nothing becomes a task without a click. Items already seen are skipped.
 
+## Monthly client reports
+
+1. On the 1st of each month (checked every 6 hours, Eastern time) the Desk creates a **draft report for the month just ended** for every client marked **Active**.
+   A draft you delete isn't recreated by the schedule; **Create Drafts** on the Reports page fills in any that are missing.
+2. **Reports** opens on that month as a board: each active client shows **Not Started**, **Needs Data**, **Draft**, **Ready to Send** or **Sent**,
+   with arrows to move between months and the full history below.
+3. **Fill In** shows only the sections that match the client's services (Reporting & Strategy, or no services, shows all; **Show All Sections** overrides),
+   with last month's value under each box.
+4. **Draft with Claude** writes What Happened, Wins and Next Actions from the numbers on screen plus that month's finished tasks
+   (tasks now record when they were ticked), approvals and decisions, open tasks, and email/meeting follow-ups. It fills the boxes for review; nothing is saved until you save.
+5. **Save & Mark Ready**, then **Mark as Sent** once it's shared with the client.
+
 ## How invoicing works
 
 1. Sign in at `https://admin.aetheradigital.com` (or `/admin` on the onrender.com address) and create an invoice (client, line items, due date, note). It's created and finalized in Stripe.
@@ -51,6 +63,9 @@ Add `aetheradigital.com`, `www.aetheradigital.com` and `admin.aetheradigital.com
 | `DATABASE_URL` | Render Postgres **Internal Database URL** for the Desk (`aethera-desk`). Without it the Desk keeps data in memory only. |
 | `DESK_COLLECTOR_TOKEN` | Shared secret for the Apps Script collector (same value as each script's `DESK_TOKEN`). |
 | `ANTHROPIC_API_KEY` | Claude API key (console.anthropic.com) used to extract action items. `ANTHROPIC_MODEL` optionally overrides the default `claude-haiku-5-5`. |
+| `ANTHROPIC_REPORT_MODEL` | Optional model for report commentary (defaults to `ANTHROPIC_MODEL`). |
+| `DESK_TIMEZONE` | Optional, default `America/New_York`: when a new month starts for report drafts and task finish dates. |
+| `REPORT_DRAFTS` | `off` stops the automatic monthly drafts. |
 | `ADMIN_PASSWORD` | Password for the admin site. Admin is off until this is set. Use a long passphrase. |
 | `ADMIN_HOST` | Optional, default `admin.aetheradigital.com`. On that host `/` is the admin dashboard; on `aetheradigital.com` and `www.` the `/admin` path redirects there and the admin API is disabled. The onrender.com address keeps `/admin` as a fallback. |
 | `PRICE_PARTNERSHIP`, `PORTAL_URL` | Optional overrides; leave unset. The server picks live or sandbox defaults from `STRIPE_SECRET_KEY`: live keys use the five Startup Package prices ($200 + $600 + $450 + $750 + $250) and the live billing portal. `PRICE_PARTNERSHIP` takes comma-separated price IDs. |

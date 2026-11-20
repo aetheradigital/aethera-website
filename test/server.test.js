@@ -31,6 +31,12 @@ const fakeStripe = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'application/json');
     if (req.url === '/v1/messages') {
       const b = JSON.parse(body); aiCalls.push(b);
+      if (b.tools[0].name === 'record_report_commentary') {
+        const src = b.messages[0].content;
+        return res.end(JSON.stringify({ content: [{ type: 'tool_use', name: 'record_report_commentary', input: {
+          summary: /Website refresh/.test(src) ? 'Search clicks grew and the homepage moved forward.' : 'Quiet month.',
+          wins: '• Discovery & sitemap finished', next_actions: '• Approve the homepage design' } }] }));
+      }
       if (b.tools[0].name === 'record_inquiry') {
         const src = b.messages[0].content;
         const input = /redesign/i.test(src)
@@ -316,7 +322,44 @@ function request(port, method, p, body, headers) {
     assert.strictEqual(d.status, 200); assert.strictEqual(d.body.item.metrics.seo_clicks, 1204); assert.strictEqual(d.body.item.metrics.ad_spend, 950.5);
     assert.strictEqual((await dj('POST', '/reports', { client_id: cl.id, period: '2026-10' })).status, 409);
     assert.strictEqual((await dj('POST', '/reports', { client_id: cl.id, period: '2026-13' })).status, 400);
+    assert.strictEqual(d.body.item.status, 'draft'); assert.strictEqual(d.body.item.created_by, 'manual');
     ok('desk approvals and monthly reports: defaults, metrics parsed, one report per month');
+
+    // ---------- automated monthly reports ----------
+    d = await dj('GET', '/tasks/' + tk.id);
+    assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(d.body.item.done_at), 'ticking a task records when it was finished');
+    d = await dj('PATCH', '/tasks/' + tk.id, { done: false });
+    assert.strictEqual(d.body.item.done_at, null);
+    d = await dj('PATCH', '/tasks/' + tk.id, { done: true, done_at: '2026-10-14' });
+    assert.strictEqual(d.body.item.done_at, '2026-10-14');
+    d = await dj('GET', '/meta');
+    assert.ok(/^\d{4}-\d{2}$/.test(d.body.report_month) && d.body.metric_groups.length === 4 && d.body.ai === true);
+    const c2 = (await dj('POST', '/clients', { name: 'LTC', company: 'Liberty Tool Company', status: 'active', services: ['Advertising & Funnels'] })).body.item;
+    await dj('POST', '/clients', { name: 'Old', status: 'past' });
+    d = await dj('POST', '/reports/drafts', { period: '2026-10' });
+    assert.strictEqual(d.status, 200); assert.strictEqual(d.body.created, 1, 'only the active client without an October report gets a draft');
+    assert.strictEqual((await dj('POST', '/reports/drafts', { period: '2026-10' })).body.created, 0, 'drafting is idempotent');
+    const auto = (await dj('GET', '/reports?client_id=' + c2.id)).body.items[0];
+    assert.strictEqual(auto.status, 'draft'); assert.strictEqual(auto.created_by, 'auto'); assert.deepStrictEqual(auto.metrics, {});
+    d = await dj('GET', '/reports?client_id=' + cl.id);
+    const oct = d.body.items[0];
+    aiCalls.length = 0;
+    d = await dj('POST', '/reports/' + oct.id + '/commentary', { metrics: { seo_clicks: 1300 } });
+    assert.strictEqual(d.status, 200, JSON.stringify(d.body));
+    assert.strictEqual(d.body.draft.summary, 'Search clicks grew and the homepage moved forward.');
+    assert.strictEqual(d.body.used.work, 1); assert.strictEqual(d.body.used.metrics, 1);
+    const sent = JSON.parse(aiCalls[0].messages[0].content.replace(/^<report_data>\n|\n<\/report_data>$/g, ''));
+    assert.strictEqual(sent.metrics_this_month['Search clicks'], 1300, 'uses the unsaved numbers on screen');
+    assert.strictEqual(sent.client, 'Bacon Roofing'); assert.ok(sent.awaiting_client.includes('Homepage design'));
+    assert.strictEqual((await dj('GET', '/reports/' + oct.id)).body.item.summary, 'Strong month', 'drafting doesn’t overwrite the saved report');
+    d = await dj('PATCH', '/reports/' + oct.id, { status: 'sent' });
+    assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(d.body.item.sent_at));
+    d = await dj('PATCH', '/reports/' + oct.id, { status: 'ready' });
+    assert.strictEqual(d.body.item.sent_at, null);
+    assert.strictEqual((await dj('PATCH', '/reports/' + oct.id, { status: 'bogus' })).status, 400);
+    await dj('DELETE', '/reports/' + auto.id);
+    await dj('DELETE', '/clients/' + c2.id);
+    ok('monthly reports: task finish dates, auto drafts for active clients, Claude commentary from the month’s work, ready/sent status');
 
     const fileBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 255]);
     let up = await request(port, 'POST', '/api/admin/desk/files?client_id=' + cl.id + '&category=brand&name=' + encodeURIComponent('logo "final".png'), fileBytes, Object.assign({ 'Content-Type': 'image/png' }, A));

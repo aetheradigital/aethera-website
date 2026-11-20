@@ -650,7 +650,8 @@ async function deskApi(req, res, url) {
   const m = req.method;
   if (p === '/meta' && m === 'GET') {
     const templates = {}; Object.keys(deskLib.TEMPLATES).forEach(function (k) { templates[k] = { label: deskLib.TEMPLATES[k].label, count: deskLib.TEMPLATES[k].tasks.length }; });
-    return json(res, 200, { store: desk.kind, templates: templates, services: deskLib.SERVICES, client_status: deskLib.CLIENT_STATUS, project_status: deskLib.PROJECT_STATUS, approval_status: deskLib.APPROVAL_STATUS, approval_kind: deskLib.APPROVAL_KIND, file_category: deskLib.FILE_CATEGORY, metrics: deskLib.METRICS });
+    return json(res, 200, { store: desk.kind, templates: templates, services: deskLib.SERVICES, client_status: deskLib.CLIENT_STATUS, project_status: deskLib.PROJECT_STATUS, approval_status: deskLib.APPROVAL_STATUS, approval_kind: deskLib.APPROVAL_KIND, file_category: deskLib.FILE_CATEGORY, metrics: deskLib.METRICS,
+      metric_groups: deskLib.METRIC_GROUPS, report_status: deskLib.REPORT_STATUS, report_month: deskLib.lastFullMonth(), ai: Boolean(ANTHROPIC_KEY) });
   }
   if (p === '/overview' && m === 'GET') return deskOverview(req, res);
 
@@ -689,6 +690,15 @@ async function deskApi(req, res, url) {
   mm = p.match(/^\/leads\/(lea_[A-Za-z0-9_-]+)\/accept$/);
   if (mm && m === 'POST') return acceptLead(req, res, mm[1]);
   if (p === '/collector' && m === 'GET') return collectorStatus(req, res);
+
+  // monthly reports: create this month's drafts now; draft the commentary with Claude
+  if (p === '/reports/drafts' && m === 'POST') {
+    const body = (await readJson(req, 1024)) || {};
+    const period = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(body.period || '')) ? body.period : deskLib.lastFullMonth();
+    return json(res, 200, { period: period, created: await ensureReportDrafts(period, true) });
+  }
+  mm = p.match(/^\/reports\/(rep_[A-Za-z0-9_-]+)\/commentary$/);
+  if (mm && m === 'POST') return reportCommentary(req, res, mm[1]);
 
   // files
   if (p === '/files' && m === 'POST') {
@@ -742,7 +752,9 @@ async function deskApi(req, res, url) {
     if (type === 'project') v.data.status = v.data.status || 'planned';
     if (type === 'approval') { v.data.status = v.data.status || 'pending'; v.data.kind = v.data.kind || 'approval'; v.data.requested = v.data.requested || new Date().toISOString().slice(0, 10); }
     if (type === 'task' && v.data.done === undefined) v.data.done = false;
+    if (type === 'task' && v.data.done && !v.data.done_at) v.data.done_at = deskLib.localDate();
     if (type === 'report') {
+      v.data.status = v.data.status || 'draft'; v.data.created_by = 'manual';
       const dup = (await desk.list('report', { client_id: v.data.client_id })).find(function (r) { return r.period === v.data.period; });
       if (dup) return json(res, 409, { error: 'There’s already a report for that month. Open it to edit.' });
     }
@@ -757,11 +769,71 @@ async function deskApi(req, res, url) {
     if (body) { delete body.client_id; delete body.project_id; }
     const v = deskLib.validate(type, body, true);
     if (v.error) return json(res, 400, { error: v.error });
+    // Record when a task was finished (reports use it); clear it when reopened.
+    if (type === 'task' && 'done' in v.data && !('done_at' in v.data)) v.data.done_at = v.data.done ? deskLib.localDate() : null;
+    if (type === 'report' && v.data.status === 'sent' && !v.data.sent_at) v.data.sent_at = deskLib.localDate();
+    if (type === 'report' && v.data.status && v.data.status !== 'sent' && !('sent_at' in v.data)) v.data.sent_at = null;
     const item = await desk.update(type, id, v.data);
     return item ? json(res, 200, { item: item }) : json(res, 404, { error: 'Not found.' });
   }
   if (id && m === 'DELETE') { await desk.remove(type, id); return json(res, 200, { ok: true }); }
   return json(res, 405, { error: 'Method not allowed' });
+}
+
+// ---------- Monthly report drafts ----------
+// A draft report for every active client, once per month. A draft that was deleted on purpose isn't recreated
+// by the schedule (each client/month is remembered), but "Create Drafts" on the Reports page (force) brings it back.
+const reportsLib = require('./lib/reports');
+async function ensureReportDrafts(period, force) {
+  const clients = (await desk.allOf('client')).filter(function (c) { return c.status === 'active'; });
+  const reports = await desk.allOf('report');
+  let created = 0;
+  for (const c of clients) {
+    if (reports.some(function (r) { return r.client_id === c.id && r.period === period; })) continue;
+    const key = 'report-draft:' + c.id + ':' + period;
+    if (!force && await desk.seen(key)) continue;
+    await desk.create('report', { client_id: c.id, period: period, metrics: {}, status: 'draft', created_by: 'auto' }, { client_id: c.id });
+    await desk.markSeen(key);
+    created++;
+  }
+  if (created) console.log('report_drafts_created ' + JSON.stringify({ period: period, created: created }));
+  return created;
+}
+function scheduleReportDrafts() {
+  if (process.env.REPORT_DRAFTS === 'off') return;
+  const run = function () {
+    deskInit().then(function () { return ensureReportDrafts(deskLib.lastFullMonth(), false); })
+      .catch(function (e) { console.error('report_drafts_failed', e.message); });
+  };
+  setTimeout(run, 5000).unref();
+  setInterval(run, 6 * 3600 * 1000).unref();
+}
+
+async function reportCommentary(req, res, id) {
+  if (!ANTHROPIC_KEY) return json(res, 503, { error: 'Set ANTHROPIC_API_KEY on the server to draft with Claude.' });
+  const report = await desk.get('report', id);
+  if (!report) return json(res, 404, { error: 'Report not found.' });
+  const client = await desk.get('client', report.client_id);
+  if (!client) return json(res, 404, { error: 'Client not found.' });
+  // Use the numbers on screen (they may not be saved yet).
+  const body = (await readJson(req, 16384)) || {};
+  if (body.metrics) {
+    const v = deskLib.validate('report', { metrics: body.metrics }, true);
+    if (v.error) return json(res, 400, { error: v.error });
+    report.metrics = v.data.metrics;
+  }
+  const where = { client_id: client.id };
+  const [reports, projects, tasks, approvals, suggestions] = await Promise.all([desk.list('report', where), desk.list('project', where),
+    desk.list('task', where), desk.list('approval', where), desk.list('suggestion', where)]);
+  const context = reportsLib.buildContext(client, report, { reports: reports, projects: projects, tasks: tasks, approvals: approvals, suggestions: suggestions }, deskLib.prevMonth);
+  try {
+    const draft = await reportsLib.draftCommentary(context, { model: REPORT_MODEL, apiKey: ANTHROPIC_KEY, apiBase: ANTHROPIC_BASE });
+    return json(res, 200, { draft: draft, used: { metrics: Object.keys(context.metrics_this_month).length, work: context.work_completed.length,
+      decisions: context.decisions_made.length, follow_ups: context.follow_ups_from_email_and_meetings.length } });
+  } catch (e) {
+    console.error('report_commentary_failed', id, e.message);
+    return json(res, 502, { error: 'Claude couldn’t draft this right now. Please try again.' });
+  }
 }
 
 // ---------- Suggested to-dos: Apps Script collector -> Claude -> Desk ----------
@@ -770,6 +842,7 @@ const COLLECTOR_TOKEN = process.env.DESK_COLLECTOR_TOKEN || '';
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || '';
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-5-5';
 const ANTHROPIC_BASE = (process.env.ANTHROPIC_API_BASE || 'https://api.anthropic.com').replace(/\/+$/, '');
+const REPORT_MODEL = process.env.ANTHROPIC_REPORT_MODEL || ANTHROPIC_MODEL;
 const ingestQueue = [];
 let ingesting = false;
 const collectorRuns = new Map(); // by -> { at, received, queued }
@@ -1150,6 +1223,7 @@ const server = http.createServer(async function (req, res) {
 });
 
 if (require.main === module) {
+  scheduleReportDrafts();
   server.listen(PORT, function () {
     console.log('aethera site listening on ' + PORT + (SECRET ? '' : ' (Stripe not configured)') + (ADMIN_PASSWORD ? '' : ' (admin disabled: set ADMIN_PASSWORD)'));
   });

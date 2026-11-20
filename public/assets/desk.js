@@ -76,7 +76,7 @@
   function failed(e) { render(h('div', { class: 'panel' }, h('h2', { text: 'Something Went Wrong' }), h('p', { class: 'empty', text: e.message }))); }
   function pageHead(eyebrow, title, acts, crumb) {
     return h('div', { class: 'ph' },
-      h('div', null, crumb ? h('a', { class: 'crumb', href: crumb[0], text: '← ' + crumb[1] }) : null, h('p', { class: 'eyebrow', style: crumb ? 'margin-top:10px' : '', text: eyebrow }), h('h1', null, title)),
+      h('div', null, crumb ? h('a', { class: 'crumb', href: crumb[0], text: '← ' + crumb[1] }) : null, h('p', { class: 'eyebrow', style: crumb ? 'margin-top:10px' : '', text: typeof eyebrow === 'string' ? eyebrow : null }, typeof eyebrow === 'string' ? null : eyebrow), h('h1', null, title)),
       h('div', { class: 'acts' }, acts || null));
   }
   function btn(label, on, cls) { return h('button', { class: 'pill small' + (cls ? ' ' + cls : ''), type: 'button', onclick: on, text: label }); }
@@ -223,7 +223,7 @@
     if (p[0] === 'projects') return projectsView();
     if (p[0] === 'approvals') return approvalsView();
     if (p[0] === 'reports' && p[1]) return reportView(p[1], q.edit === '1');
-    if (p[0] === 'reports') return reportsView();
+    if (p[0] === 'reports') return reportsView(q.month);
     if (p[0] === 'invoices') return invoicesView(q);
     overview();
   }
@@ -502,7 +502,7 @@
       h('div', { class: 'toolbar' }, btn('New Monthly Report', function () { newReport(c.id); })),
       d.reports.length ? h('div', { class: 'grid g3' }, d.reports.map(function (r) {
         var m = r.metrics || {}; var keys = Object.keys(m).slice(0, 3);
-        return h('a', { class: 'pc', href: '#/reports/' + r.id }, h('b', { text: monthName(r.period) }), h('small', { text: keys.map(function (k) { return METRIC[k][0] + ' ' + mfmt(k, m[k]); }).join(' · ') || 'No metrics yet' }));
+        return h('a', { class: 'pc', href: '#/reports/' + r.id }, h('b', null, monthName(r.period) + ' ', repBadge(r)), h('small', { text: keys.map(function (k) { return METRIC[k][0] + ' ' + mfmt(k, m[k]); }).join(' · ') || 'No metrics yet' }));
       })) : h('div', { class: 'panel' }, emptyLine('No reports yet. Create a monthly report to track SEO, ads, social and leads over time.')));
   }
   function newReport(clientId, clients) {
@@ -689,19 +689,87 @@
   }
 
   // ---------- reports ----------
-  function reportsView() {
+  // Where a report stands: none (no report yet), needs (draft, no numbers), review (draft with content), ready, sent.
+  // Reports from before statuses existed count as ready.
+  function repState(r) {
+    if (!r) return 'none';
+    var s = r.status || 'ready';
+    if (s === 'draft') return Object.keys(r.metrics || {}).length || r.summary ? 'review' : 'needs';
+    return s;
+  }
+  var REP_LABEL = { none: 'Not Started', needs: 'Needs Data', review: 'Draft', ready: 'Ready to Send', sent: 'Sent' };
+  function repBadge(r) { var s = repState(r); return h('span', { class: 'st rp-' + s, text: REP_LABEL[s] }); }
+  function highlights(m, n) { return Object.keys(m || {}).slice(0, n || 3).map(function (k) { return METRIC[k][0] + ' ' + mfmt(k, m[k]); }).join(' · '); }
+  function shiftMonth(p, by) { var a = p.split('-').map(Number); var n = a[0] * 12 + a[1] - 1 + by; return Math.floor(n / 12) + '-' + String(n % 12 + 1).padStart(2, '0'); }
+  // Same rule as the server: Reporting & Strategy (or no services) shows everything; "Website & Leads" always shows.
+  function groupsFor(c, m) {
+    var s = c.services || [];
+    return META.metric_groups.filter(function (g) {
+      if (!s.length || s.indexOf('Reporting & Strategy') >= 0 || !g.services) return true;
+      if (g.services.some(function (x) { return s.indexOf(x) >= 0; })) return true;
+      return g.metrics.some(function (k) { return m && m[k] !== undefined; }); // never hide numbers already entered
+    });
+  }
+
+  function reportsView(month) {
     loading();
+    var period = /^\d{4}-\d{2}$/.test(month || '') ? month : META.report_month;
     Promise.all([desk('GET', '/reports'), desk('GET', '/clients')]).then(function (r) {
-      var names = {}; r[1].items.forEach(function (c) { names[c.id] = c.company || c.name; });
-      var list = r[0].items.sort(function (a, b) { return a.period < b.period ? 1 : -1; });
-      render(pageHead('Results', 'Client Reports', [btn('New Report', function () { if (!r[1].items.length) { toast('Add a client first', true); return; } newReport(null, r[1].items); })]),
-        h('div', { class: 'card flush' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', { text: 'Month' }), h('th', { text: 'Client' }), h('th', { text: 'Highlights' }))),
-          h('tbody', null, list.length ? list.map(function (rp) {
-            var m = rp.metrics || {};
+      var clients = r[1].items; var names = {}; clients.forEach(function (c) { names[c.id] = c.company || c.name; });
+      var all = r[0].items.sort(function (a, b) { return a.period < b.period ? 1 : a.period > b.period ? -1 : (names[a.client_id] || '').localeCompare(names[b.client_id] || ''); });
+      var thisMonth = {}; all.forEach(function (x) { if (x.period === period) thisMonth[x.client_id] = x; });
+      var rows = clients.filter(function (c) { return c.status === 'active' || thisMonth[c.id]; })
+        .sort(function (a, b) { return (names[a.id] || '').localeCompare(names[b.id] || ''); })
+        .map(function (c) { return { c: c, r: thisMonth[c.id] || null }; });
+      var order = ['none', 'needs', 'review', 'ready', 'sent'];
+      rows.sort(function (a, b) { return order.indexOf(repState(a.r)) - order.indexOf(repState(b.r)); });
+      var count = {}; order.forEach(function (k) { count[k] = 0; }); rows.forEach(function (x) { count[repState(x.r)]++; });
+      var missing = count.none;
+      var go = function (p) { location.hash = '#/reports?month=' + p; };
+
+      var nav = h('div', { class: 'monthnav' },
+        h('button', { class: 'chip', type: 'button', 'aria-label': 'Previous month', text: '‹', onclick: function () { go(shiftMonth(period, -1)); } }),
+        h('b', { text: monthName(period) }),
+        h('button', { class: 'chip', type: 'button', 'aria-label': 'Next month', text: '›', onclick: function () { go(shiftMonth(period, 1)); } }),
+        period !== META.report_month ? h('button', { class: 'chip', type: 'button', text: 'Latest', onclick: function () { go(META.report_month); } }) : null);
+
+      var cards = rows.map(function (x) {
+        var st = repState(x.r); var c = x.c;
+        var sub = x.r ? (highlights(x.r.metrics) || (x.r.summary ? 'Commentary written, no numbers yet' : 'No numbers yet')) : 'No report for this month yet';
+        var note = x.r && x.r.status === 'sent' && x.r.sent_at ? 'Sent ' + day(x.r.sent_at) : x.r && x.r.created_by === 'auto' && st === 'needs' ? 'Drafted automatically' : '';
+        var action = st === 'none'
+          ? btn('Start Report', function () { desk('POST', '/reports', { client_id: c.id, period: period }).then(function (y) { location.hash = '#/reports/' + y.item.id + '?edit=1'; }).catch(function (e) { toast(e.message, true); }); })
+          : h('a', { class: 'pill small' + (st === 'ready' || st === 'sent' ? ' ghost' : ''), href: '#/reports/' + x.r.id + (st === 'needs' ? '?edit=1' : ''), text: st === 'needs' ? 'Fill In' : st === 'review' ? 'Review' : 'Open' });
+        return h('div', { class: 'repcard' },
+          h('div', { class: 'top' }, h('a', { class: 'nm', href: '#/clients/' + c.id + '/reports', text: names[c.id] }), repBadge(x.r)),
+          h('small', { text: sub }), note ? h('small', { class: 'note', text: note }) : null,
+          h('div', { class: 'act' }, action));
+      });
+
+      render(pageHead('Results', 'Client Reports', [
+          missing ? btn('Create ' + missing + ' Draft' + (missing > 1 ? 's' : ''), function (e) {
+            e.target.disabled = true;
+            desk('POST', '/reports/drafts', { period: period }).then(function (y) { toast(y.created + ' draft' + (y.created === 1 ? '' : 's') + ' created'); reportsView(period); }).catch(function (er) { e.target.disabled = false; toast(er.message, true); });
+          }) : null,
+          btn('New Report', function () { if (!clients.length) { toast('Add a client first', true); return; } newReport(null, clients); }, 'ghost')]),
+        nav,
+        rows.length ? h('div', { class: 'grid g4', style: 'margin-bottom:18px' },
+          tile('Needs Data', String(count.needs + count.none), count.none ? count.none + ' not started' : 'Numbers to enter'),
+          tile('To Review', String(count.review), 'Drafts with content'),
+          tile('Ready to Send', String(count.ready), 'Reviewed'),
+          tile('Sent', String(count.sent), 'Shared with the client')) : null,
+        rows.length ? h('div', { class: 'grid g3' }, cards)
+          : h('div', { class: 'panel' }, emptyLine('No active clients for ' + monthName(period) + '. Set a client to Active and a draft report is created for them automatically at the start of each month.')),
+        h('h2', { class: 'sect', text: 'All Reports' }),
+        h('div', { class: 'card flush' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', { text: 'Month' }), h('th', { text: 'Client' }), h('th', { text: 'Status' }), h('th', { text: 'Highlights' }))),
+          h('tbody', null, all.length ? all.map(function (rp) {
             return h('tr', { class: 'link', onclick: function () { location.hash = '#/reports/' + rp.id; } }, h('td', { text: monthName(rp.period) }), h('td', { text: names[rp.client_id] || '' }),
-              h('td', { text: Object.keys(m).slice(0, 3).map(function (k) { return METRIC[k][0] + ' ' + mfmt(k, m[k]); }).join(' · ') || '—' }));
-          }) : h('tr', null, h('td', { colspan: 3, class: 'empty', text: 'No reports yet.' }))))));
+              h('td', null, repBadge(rp)), h('td', { text: highlights(rp.metrics) || '—' }));
+          }) : h('tr', null, h('td', { colspan: 4, class: 'empty', text: 'No reports yet.' }))))));
     }).catch(failed);
+  }
+  function setReportStatus(rp, status) {
+    return desk('PATCH', '/reports/' + rp.id, { status: status }).then(function () { toast(status === 'sent' ? 'Marked as sent' : status === 'ready' ? 'Marked ready to send' : 'Moved back to draft'); route(); }).catch(function (e) { toast(e.message, true); });
   }
   function reportView(id, editing) {
     loading();
@@ -711,11 +779,15 @@
         var c = r[0].item; var cname = c.company || c.name;
         var history = r[1].items.filter(function (h2) { return h2.period <= rp.period; }).sort(function (a, b) { return a.period < b.period ? -1 : 1; }).slice(-12);
         var prev = history.length > 1 ? history[history.length - 2] : null;
-        if (editing) return reportEditor(rp, c);
+        if (editing) return reportEditor(rp, c, prev);
         var m = rp.metrics || {}; var keys = META.metrics.filter(function (k) { return m[k] !== undefined; });
         var cpl = m.ad_spend && m.leads ? m.ad_spend / m.leads : null;
-        render(pageHead(cname, [monthName(rp.period), h('em', { text: ' report' })], [btn('Edit', function () { location.hash = '#/reports/' + rp.id + '?edit=1'; }, 'ghost'), btn('Print / PDF', function () { window.print(); }, 'ghost'),
-          btn('Delete', function () { if (!confirmDelete('this report')) return; desk('DELETE', '/reports/' + rp.id).then(function () { toast('Report deleted'); location.hash = '#/clients/' + c.id + '/reports'; }); }, 'ghost')], ['#/clients/' + c.id + '/reports', cname]),
+        var st = repState(rp);
+        var next = st === 'needs' || st === 'review' ? btn('Mark Ready', function () { setReportStatus(rp, 'ready'); })
+          : st === 'ready' ? btn('Mark as Sent', function () { setReportStatus(rp, 'sent'); })
+          : btn('Reopen', function () { setReportStatus(rp, 'draft'); }, 'ghost');
+        render(pageHead(h('span', null, cname + ' ', repBadge(rp)), [monthName(rp.period), h('em', { text: ' report' })], [next, btn('Edit', function () { location.hash = '#/reports/' + rp.id + '?edit=1'; }, 'ghost'), btn('Print / PDF', function () { window.print(); }, 'ghost'),
+          btn('Delete', function () { if (!confirmDelete('this report')) return; desk('DELETE', '/reports/' + rp.id).then(function () { toast('Report deleted'); location.hash = '#/clients/' + c.id + '/reports'; }); }, 'ghost')], ['#/reports?month=' + rp.period, 'All Reports']),
           keys.length ? h('div', { class: 'kpis' }, keys.map(function (k) { return kpi(k, history, prev); }), cpl !== null ? h('div', { class: 'kpi' }, h('div', { class: 'k', text: 'Cost per Lead' }), h('div', { class: 'v', text: usd(cpl) }), h('div', { class: 'd', text: 'Ad spend ÷ leads' })) : null)
             : h('div', { class: 'panel' }, emptyLine('No numbers yet. Click Edit to add this month’s metrics.')),
           h('div', { class: 'grid g3 prose', style: 'margin-top:18px' },
@@ -761,30 +833,63 @@
   var tip = document.getElementById('tip');
   function showTip(e, text) { tip.textContent = text; tip.classList.add('on'); tip.style.left = Math.min(e.clientX + 12, window.innerWidth - tip.offsetWidth - 8) + 'px'; tip.style.top = (e.clientY - 40) + 'px'; }
   function hideTip() { tip.classList.remove('on'); }
-  function reportEditor(rp, c) {
-    var m = rp.metrics || {};
-    var groups = [['Search', ['seo_clicks', 'seo_impressions', 'seo_avg_position']], ['Website & Leads', ['sessions', 'leads', 'revenue']], ['Advertising', ['ad_spend', 'ad_clicks', 'ad_conversions']], ['Social', ['social_followers', 'social_engagement']]];
+  function reportEditor(rp, c, prev) {
+    var m = rp.metrics || {}; var pm = (prev && prev.metrics) || {};
+    var shown = groupsFor(c, m); var showAll = shown.length === META.metric_groups.length;
+    var sections = h('div');
+    function drawSections() {
+      // keep anything typed when switching between "relevant" and "all" sections
+      Array.prototype.forEach.call(sections.querySelectorAll('input'), function (i) { m[i.name] = i.value.trim() === '' ? undefined : i.value.trim(); });
+      sections.innerHTML = '';
+      (showAll ? META.metric_groups : shown).forEach(function (g) {
+        sections.appendChild(h('div', { class: 'panel', style: 'margin-bottom:16px' }, h('h2', null, g.label), h('div', { class: 'metrics-form' }, g.metrics.map(function (k) {
+          return h('div', { class: 'fld' }, h('label', { for: 'm_' + k, text: METRIC[k][0] + (METRIC[k][1] === '$' ? ' ($)' : '') }),
+            h('input', { id: 'm_' + k, name: k, inputmode: 'decimal', value: m[k] !== undefined ? m[k] : '', placeholder: '—' }),
+            h('small', { class: 'was', text: pm[k] !== undefined ? 'Last month: ' + mfmt(k, pm[k]) : prev ? 'Not tracked last month' : 'First report' }));
+        }))));
+      });
+    }
+    drawSections();
+    var toggle = shown.length < META.metric_groups.length ? h('button', { class: 'chip', type: 'button', text: 'Show All Sections', onclick: function (e) {
+      showAll = !showAll; e.target.textContent = showAll ? 'Only This Client’s Services' : 'Show All Sections'; drawSections();
+    } }) : null;
+    function metricsNow() { var o = {}; Array.prototype.forEach.call(sections.querySelectorAll('input'), function (i) { if (i.value.trim() !== '') o[i.name] = i.value.trim(); }); Object.keys(m).forEach(function (k) { if (o[k] === undefined && m[k] !== undefined && !sections.querySelector('input[name="' + k + '"]')) o[k] = m[k]; }); return o; }
+
+    var aiNote = h('small', { class: 'was', style: 'display:block;margin-top:-6px;margin-bottom:12px' });
+    var aiBtn = btn('Draft with Claude', function () {
+      var ta = ['summary', 'wins', 'next_actions'].map(function (n) { return form.elements[n]; });
+      if (ta.some(function (t) { return t.value.trim(); }) && !window.confirm('Replace what’s written below with a new draft?')) return;
+      aiBtn.disabled = true; aiBtn.textContent = 'Drafting…';
+      desk('POST', '/reports/' + rp.id + '/commentary', { metrics: metricsNow() }).then(function (y) {
+        ta[0].value = y.draft.summary; ta[1].value = y.draft.wins; ta[2].value = y.draft.next_actions;
+        var u = y.used; var bits = [u.metrics + ' metric' + (u.metrics === 1 ? '' : 's'), u.work + ' finished task' + (u.work === 1 ? '' : 's'), u.decisions + ' decision' + (u.decisions === 1 ? '' : 's'), u.follow_ups + ' email/meeting follow-up' + (u.follow_ups === 1 ? '' : 's')];
+        aiNote.textContent = 'Drafted from ' + bits.join(', ') + '. Read it over and edit before saving.';
+        toast('Draft ready to review');
+      }).catch(function (e) { toast(e.message, true); }).then(function () { aiBtn.disabled = false; aiBtn.textContent = 'Draft with Claude'; });
+    }, 'ghost');
+    if (!META.ai) { aiBtn.disabled = true; aiBtn.title = 'Set ANTHROPIC_API_KEY on the server to use this'; }
+
+    var err = h('p', { class: 'err', id: 'rep-err', role: 'alert', hidden: true, style: 'margin-top:16px' });
     var form = h('form', { novalidate: true },
-      groups.map(function (g) {
-        return h('div', { class: 'panel', style: 'margin-bottom:16px' }, h('h2', null, g[0]), h('div', { class: 'metrics-form' }, g[1].map(function (k) {
-          return h('div', { class: 'fld' }, h('label', { for: 'm_' + k, text: METRIC[k][0] + (METRIC[k][1] === '$' ? ' ($)' : '') }), h('input', { id: 'm_' + k, name: k, inputmode: 'decimal', value: m[k] !== undefined ? m[k] : '', placeholder: '—' }));
-        })));
-      }),
-      h('div', { class: 'panel' }, h('h2', null, 'Interpretation'),
+      toggle ? h('div', { class: 'toolbar' }, h('small', { class: 'was', text: 'Showing sections for ' + ((c.services || []).length ? (c.services || []).join(', ') : 'all services') + '.' }), toggle) : null,
+      sections,
+      h('div', { class: 'panel' }, h('div', { class: 'hrow' }, h('h2', null, 'Interpretation'), aiBtn), aiNote,
         h('div', { style: 'display:flex;flex-direction:column;gap:16px' },
           field({ name: 'summary', label: 'What Happened This Month', type: 'textarea', rows: 4 }, rp.summary),
-          field({ name: 'wins', label: 'Wins', type: 'textarea', rows: 3 }, rp.wins),
-          field({ name: 'next_actions', label: 'Next Actions', type: 'textarea', rows: 3 }, rp.next_actions))),
-      h('p', { class: 'err', id: 'rep-err', role: 'alert', hidden: true, style: 'margin-top:16px' }),
-      h('div', { class: 'toolbar', style: 'margin-top:18px;justify-content:flex-end' }, h('a', { class: 'pill ghost', href: '#/reports/' + rp.id, text: 'Cancel' }), h('button', { class: 'pill', type: 'submit', text: 'Save Report' })));
-    form.addEventListener('submit', function (e) {
-      e.preventDefault();
-      var metrics = {}; META.metrics.forEach(function (k) { var v = form.elements[k].value.trim(); if (v !== '') metrics[k] = v; });
-      desk('PATCH', '/reports/' + rp.id, { metrics: metrics, summary: form.elements.summary.value.trim(), wins: form.elements.wins.value.trim(), next_actions: form.elements.next_actions.value.trim() })
-        .then(function () { toast('Report saved'); location.hash = '#/reports/' + rp.id; })
-        .catch(function (x) { var er = document.getElementById('rep-err'); er.textContent = x.message; er.hidden = false; });
-    });
-    render(pageHead(c.company || c.name, ['Edit ', h('em', { text: monthName(rp.period) })], null, ['#/reports/' + rp.id, 'Back to Report']), form);
+          field({ name: 'wins', label: 'Wins', type: 'textarea', rows: 4 }, rp.wins),
+          field({ name: 'next_actions', label: 'Next Actions', type: 'textarea', rows: 4 }, rp.next_actions))),
+      err,
+      h('div', { class: 'toolbar', style: 'margin-top:18px;justify-content:flex-end' }, h('a', { class: 'pill ghost', href: '#/reports/' + rp.id, text: 'Cancel' }),
+        h('button', { class: 'pill ghost', type: 'button', text: 'Save Draft', onclick: function () { save(rp.status === 'sent' ? 'sent' : rp.status === 'ready' ? 'ready' : 'draft'); } }),
+        h('button', { class: 'pill', type: 'submit', text: rp.status === 'sent' ? 'Save' : 'Save & Mark Ready' })));
+    function save(status) {
+      err.hidden = true;
+      desk('PATCH', '/reports/' + rp.id, { metrics: metricsNow(), summary: form.elements.summary.value.trim(), wins: form.elements.wins.value.trim(), next_actions: form.elements.next_actions.value.trim(), status: status })
+        .then(function () { toast(status === 'ready' ? 'Saved and ready to send' : 'Report saved'); location.hash = '#/reports/' + rp.id; })
+        .catch(function (x) { err.textContent = x.message; err.hidden = false; });
+    }
+    form.addEventListener('submit', function (e) { e.preventDefault(); save(rp.status === 'sent' ? 'sent' : 'ready'); });
+    render(pageHead(h('span', null, (c.company || c.name) + ' ', repBadge(rp)), ['Edit ', h('em', { text: monthName(rp.period) })], null, ['#/reports/' + rp.id, 'Back to Report']), form);
   }
 
   // ---------- invoices ----------
