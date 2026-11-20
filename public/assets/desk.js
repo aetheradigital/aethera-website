@@ -816,7 +816,7 @@
         var next = st === 'needs' || st === 'review' ? btn('Mark Ready', function () { setReportStatus(rp, 'ready'); })
           : st === 'ready' ? btn('Mark as Sent', function () { setReportStatus(rp, 'sent'); })
           : btn('Reopen', function () { setReportStatus(rp, 'draft'); }, 'ghost');
-        render(pageHead(h('span', null, cname + ' ', repBadge(rp)), [monthName(rp.period), h('em', { text: ' report' })], [next, btn('Edit', function () { location.hash = '#/reports/' + rp.id + '?edit=1'; }, 'ghost'), btn('Print / PDF', function () { window.print(); }, 'ghost'),
+        render(pageHead(h('span', null, cname + ' ', repBadge(rp)), [monthName(rp.period), h('em', { text: ' report' })], [next, btn('Edit', function () { location.hash = '#/reports/' + rp.id + '?edit=1'; }, 'ghost'), btn('Download PDF', function () { exportReport(rp, c, history, prev); }, 'ghost'),
           btn('Delete', function () { if (!confirmDelete('this report')) return; desk('DELETE', '/reports/' + rp.id).then(function () { toast('Report deleted'); location.hash = '#/clients/' + c.id + '/reports'; }); }, 'ghost')], ['#/reports?month=' + rp.period, 'All Reports']),
           keys.length ? h('div', { class: 'kpis' }, keys.map(function (k) { return kpi(k, history, prev); }), cpl !== null ? h('div', { class: 'kpi' }, h('div', { class: 'k', text: 'Cost per Lead' }), h('div', { class: 'v', text: usd(cpl) }), h('div', { class: 'd', text: 'Ad spend ÷ leads' })) : null)
             : h('div', { class: 'panel' }, emptyLine('No numbers yet. Click Edit to add this month’s metrics.')),
@@ -865,6 +865,56 @@
   var tip = document.getElementById('tip');
   function showTip(e, text) { tip.textContent = text; tip.classList.add('on'); tip.style.left = Math.min(e.clientX + 12, window.innerWidth - tip.offsetWidth - 8) + 'px'; tip.style.top = (e.clientY - 40) + 'px'; }
   function hideTip() { tip.classList.remove('on'); }
+  // ---------- report PDF ----------
+  // A designed, paginated version of the report (Letter, dark brand look, no browser headers), saved through the
+  // browser's own "Save as PDF". The on-screen page is hidden while printing; only this document prints.
+  function exportReport(rp, c, history, prev) {
+    var old = document.getElementById('print-report'); if (old) old.remove();
+    var m = rp.metrics || {}; var cname = c.company || c.name;
+    var groups = META.metric_groups.map(function (g) {
+      var keys = g.metrics.filter(function (k) { return m[k] !== undefined; });
+      return keys.length ? { label: g.label, keys: keys } : null;
+    }).filter(Boolean);
+    var cpl = m.ad_spend && m.leads ? m.ad_spend / m.leads : null;
+    var sources = {}; Object.keys(rp.sources || {}).forEach(function (k) { if (m[k] !== undefined) sources[SRC[rp.sources[k]]] = 1; });
+    function lines(t) {
+      var items = String(t || '').split(/\n+/).map(function (x) { return x.replace(/^\s*(•|-|\*)\s*/, '').trim(); }).filter(Boolean);
+      return items.length > 1 || /^\s*(•|-|\*)/.test(String(t || '')) ? h('ul', null, items.map(function (x) { return h('li', { text: x }); })) : h('p', { text: items[0] || '—' });
+    }
+    var doc = h('div', { id: 'print-report', class: 'pr', 'aria-hidden': 'true' },
+      h('div', { class: 'pr-bg' }),
+      h('div', { class: 'pr-foot' }, h('span', { text: 'Aethera Digital · aetheradigital.com' }), h('span', { text: cname + ' · ' + monthName(rp.period) })),
+      h('header', { class: 'pr-head' },
+        h('img', { src: '/assets/wordmark-full.png', alt: 'Aethera Digital' }),
+        h('div', { class: 'pr-meta' }, h('span', { text: 'Monthly Performance Report' }), h('b', { text: monthName(rp.period) }))),
+      h('section', { class: 'pr-title' },
+        h('p', { class: 'pr-eyebrow', text: 'Prepared for' }),
+        h('h1', { text: cname }),
+        h('p', { class: 'pr-sub', text: [c.company && c.name ? c.name : '', 'Issued ' + day(new Date().toLocaleDateString('en-CA'))].filter(Boolean).join(' · ') })),
+      rp.summary ? h('section', { class: 'pr-summary' }, h('h2', { text: 'What Happened This Month' }), lines(rp.summary)) : null,
+      groups.map(function (g) {
+        return h('section', { class: 'pr-group' }, h('h2', { text: g.label }),
+          h('div', { class: 'pr-kpis' }, g.keys.map(function (k) { return kpi(k, history, prev); }),
+            g.label === 'Advertising' && cpl !== null ? h('div', { class: 'kpi' }, h('div', { class: 'k', text: 'Cost per Lead' }), h('div', { class: 'v', text: usd(cpl) }), h('div', { class: 'd', text: 'Ad spend ÷ leads' })) : null));
+      }),
+      !groups.length ? h('section', { class: 'pr-group' }, h('p', { class: 'pr-note', text: 'No numbers were recorded for this month.' })) : null,
+      rp.wins || rp.next_actions ? h('section', { class: 'pr-two' },
+        h('div', { class: 'pr-card' }, h('h2', { text: 'Wins' }), lines(rp.wins)),
+        h('div', { class: 'pr-card' }, h('h2', { text: 'Next Actions' }), lines(rp.next_actions))) : null,
+      h('p', { class: 'pr-note', text: [
+        Object.keys(sources).length ? 'Figures from ' + Object.keys(sources).join(' and ') + ' for ' + monthName(rp.period) + '.' : '',
+        prev ? 'Changes compare with ' + monthName(prev.period) + '.' : ''].filter(Boolean).join(' ') }));
+    document.body.appendChild(doc);
+    var title = document.title;
+    document.title = cname + ' – ' + monthName(rp.period) + ' Report'; // becomes the PDF's file name
+    var done = function () { document.title = title; doc.remove(); window.removeEventListener('afterprint', done); };
+    window.addEventListener('afterprint', done);
+    // let the logo and fonts load before the print dialog opens
+    var img = doc.querySelector('img');
+    var go = function () { (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(function () { setTimeout(function () { window.print(); }, 50); }); };
+    if (img.complete) go(); else { img.onload = go; img.onerror = go; }
+  }
+
   function reportEditor(rp, c, prev) {
     var m = rp.metrics || {}; var pm = (prev && prev.metrics) || {};
     var shown = groupsFor(c, m); var showAll = shown.length === META.metric_groups.length;
