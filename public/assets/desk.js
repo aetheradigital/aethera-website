@@ -257,6 +257,7 @@
     if (p[0] === 'invoices') return invoicesView(q);
     if (p[0] === 'health' && p[1]) return assetView(p[1], p[2] || 'checks');
     if (p[0] === 'health') return healthView(q.client || '');
+    if (p[0] === 'quotes' && window.DeskQuotes) return window.DeskQuotes.route(p, q);
     overview();
   }
   window.addEventListener('hashchange', route);
@@ -415,8 +416,8 @@
     loading();
     desk('GET', '/clients/' + id + '/full').then(function (d) {
       var c = d.client; var base = '#/clients/' + c.id;
-      var counts = { health: (d.assets || []).length, projects: d.projects.length, files: d.files.length, approvals: d.approvals.filter(function (a) { return a.status === 'pending'; }).length, reports: d.reports.length, invoices: d.invoices.length };
-      var tabs = h('nav', { class: 'tabs', 'aria-label': 'Client sections' }, [['overview', 'Overview'], ['projects', 'Projects'], ['health', 'Health'], ['files', 'Files'], ['approvals', 'Approvals'], ['reports', 'Reports'], ['invoices', 'Invoices']].map(function (t) {
+      var counts = { health: (d.assets || []).length, projects: d.projects.length, files: d.files.length, approvals: d.approvals.filter(function (a) { return a.status === 'pending'; }).length, reports: d.reports.length, quotes: (d.quotes || []).length, invoices: d.invoices.length };
+      var tabs = h('nav', { class: 'tabs', 'aria-label': 'Client sections' }, [['overview', 'Overview'], ['projects', 'Projects'], ['health', 'Health'], ['files', 'Files'], ['approvals', 'Approvals'], ['reports', 'Reports'], ['quotes', 'Quotes'], ['invoices', 'Invoices']].map(function (t) {
         return h('a', { href: base + (t[0] === 'overview' ? '' : '/' + t[0]), 'aria-current': tab === t[0] ? 'page' : null }, t[1], counts[t[0]] ? h('small', { text: String(counts[t[0]]) }) : null);
       }));
       var statusSel = h('select', { class: 'st ' + (c.status || 'lead'), 'aria-label': 'Client status', onchange: function (e) {
@@ -430,9 +431,10 @@
       else if (tab === 'reports') body = clientReports(c, d);
       else if (tab === 'invoices') body = clientInvoices(c, d);
       else if (tab === 'health') body = clientHealth(c, d, reload);
+      else if (tab === 'quotes' && window.DeskQuotes) body = window.DeskQuotes.clientTab(c, d);
       else body = clientOverview(c, d, reload);
       render(pageHead(c.company ? c.name : 'Client', [c.company || c.name, ' ', statusSel],
-        [btn('New Invoice', function () { location.hash = '#/invoices?new=1&client=' + c.id; }), btn('Edit', function () { editClient(c, reload); }, 'ghost')], ['#/clients', 'Clients']), tabs, body);
+        [btn('New Quote', function () { window.DeskQuotes.newQuote(c.id); }, 'ghost'), btn('New Invoice', function () { location.hash = '#/invoices?new=1&client=' + c.id; }), btn('Edit', function () { editClient(c, reload); }, 'ghost')], ['#/clients', 'Clients']), tabs, body);
     }).catch(failed);
   }
   function clientOverview(c, d, reload) {
@@ -1458,4 +1460,9 @@
       paint();
     }).catch(failed);
   }
+
+  // Shared with the quotes screens (desk-quotes.js).
+  window.Desk = { h: h, add: add, render: render, btn: btn, desk: desk, api: api, toast: toast, copy: copy, loading: loading, failed: failed, pageHead: pageHead,
+    field: field, modal: modal, money: money, usd: usd, day: day, today: today, lab: lab, emptyLine: emptyLine, confirmDelete: confirmDelete, tile: tile,
+    meta: function () { return META; }, route: function () { route(); } };
 })();

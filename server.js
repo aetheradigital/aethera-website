@@ -481,6 +481,38 @@ function parseItems(items) {
   return out;
 }
 
+// Create, fill and finalize a send-invoice Stripe invoice. Deletes the draft if anything fails part way.
+// o: { email, name, company, memo, days, items: [{ description, quantity, cents }], source, metadata }
+async function createInvoice(o) {
+  let invoice = null;
+  try {
+    const customer = await findOrCreateCustomer(o.email, o.name, o.company, o.source || 'aethera_admin');
+    invoice = await stripe('POST', '/v1/invoices', {
+      customer: customer.id,
+      collection_method: 'send_invoice',
+      days_until_due: o.days,
+      auto_advance: false,
+      pending_invoice_items_behavior: 'exclude',
+      description: o.memo || undefined,
+      footer: 'Aethera Digital · aetheradigital.com · hello@aetheradigital.com',
+      payment_settings: { payment_method_types: PAYMENT_METHOD_TYPES },
+      automatic_tax: AUTOMATIC_TAX ? { enabled: true } : undefined,
+      metadata: Object.assign({ source: o.source || 'aethera_admin', contact_name: o.name || '', company: o.company || '' }, o.metadata || {})
+    });
+    for (const it of o.items) {
+      await stripe('POST', '/v1/invoiceitems', {
+        customer: customer.id, invoice: invoice.id, currency: 'usd',
+        description: it.description, quantity: it.quantity, unit_amount_decimal: String(it.cents)
+      });
+    }
+    return await stripe('POST', '/v1/invoices/' + invoice.id + '/finalize', { auto_advance: false });
+  } catch (e) {
+    console.error('invoice_create_failed', o.source, e.status, e.message);
+    if (invoice && invoice.status === 'draft') await stripe('DELETE', '/v1/invoices/' + invoice.id).catch(function () {});
+    throw e;
+  }
+}
+
 async function adminCreate(req, res) {
   const body = await readJson(req, 32768);
   if (!body) return json(res, 400, { error: 'Invalid request.' });
@@ -499,31 +531,8 @@ async function adminCreate(req, res) {
 
   let invoice = null;
   try {
-    const customer = await findOrCreateCustomer(email, name, company, 'aethera_admin');
-    invoice = await stripe('POST', '/v1/invoices', {
-      customer: customer.id,
-      collection_method: 'send_invoice',
-      days_until_due: days,
-      auto_advance: false,
-      pending_invoice_items_behavior: 'exclude',
-      description: memo || undefined,
-      footer: 'Aethera Digital · aetheradigital.com · hello@aetheradigital.com',
-      payment_settings: { payment_method_types: PAYMENT_METHOD_TYPES },
-      automatic_tax: AUTOMATIC_TAX ? { enabled: true } : undefined,
-      metadata: { source: 'aethera_admin', contact_name: name, company: company }
-    });
-    for (const it of items) {
-      await stripe('POST', '/v1/invoiceitems', {
-        customer: customer.id, invoice: invoice.id, currency: 'usd',
-        description: it.description, quantity: it.quantity, unit_amount_decimal: String(it.cents)
-      });
-    }
-    invoice = await stripe('POST', '/v1/invoices/' + invoice.id + '/finalize', { auto_advance: false });
+    invoice = await createInvoice({ email: email, name: name, company: company, memo: memo, days: days, items: items, source: 'aethera_admin' });
   } catch (e) {
-    console.error('admin_invoice_create_failed', e.status, e.message);
-    if (invoice && invoice.status === 'draft') {
-      await stripe('DELETE', '/v1/invoices/' + invoice.id).catch(function () {});
-    }
     return json(res, 502, { error: 'Stripe couldn’t create the invoice: ' + e.message });
   }
 
@@ -655,6 +664,7 @@ async function deskApi(req, res, url) {
       metric_groups: deskLib.METRIC_GROUPS, collector: Boolean(COLLECTOR_TOKEN), report_status: deskLib.REPORT_STATUS, report_month: deskLib.lastFullMonth(), ai: Boolean(ANTHROPIC_KEY) });
   }
   if (p === '/overview' && m === 'GET') return deskOverview(req, res);
+  if (/^\/(quotes|terms|catalog)(\/|$)/.test(p)) { const r = await quotesApi(req, res, p, m, url); if (r !== null) return r; return json(res, 404, { error: 'Not found' }); }
 
   // client profile with everything attached
   let mm = p.match(/^\/clients\/([a-z]{3}_[A-Za-z0-9_-]+)\/full$/);
@@ -666,7 +676,8 @@ async function deskApi(req, res, url) {
       desk.list('report', { client_id: c.id }), desk.listFiles(c.id), desk.list('suggestion', { client_id: c.id }), desk.list('asset', { client_id: c.id })]);
     let invoices = []; let invoiceError = null;
     try { invoices = await stripeInvoicesFor(c.email, originOf(req)); } catch (e) { invoiceError = 'Couldn’t load invoices from Stripe.'; }
-    return json(res, 200, { client: c, suggestions: suggestions.filter(function (x) { return x.status === 'new'; }).reverse(), projects: projects, tasks: tasks, approvals: approvals, reports: reports.sort(function (a, b) { return a.period < b.period ? 1 : -1; }), files: files, assets: assets, invoices: invoices, invoice_error: invoiceError });
+    return json(res, 200, { client: c, suggestions: suggestions.filter(function (x) { return x.status === 'new'; }).reverse(), projects: projects, tasks: tasks, approvals: approvals, reports: reports.sort(function (a, b) { return a.period < b.period ? 1 : -1; }), files: files, assets: assets, invoices: invoices, invoice_error: invoiceError,
+      quotes: (await desk.list('quote', { client_id: c.id })).sort(function (a, b) { return a.created_at < b.created_at ? 1 : -1; }).map(function (q) { const o = {}; o[c.id] = c; return quoteSummary(q, o); }) });
   }
 
   // apply a checklist template to a project
@@ -801,12 +812,497 @@ async function deskApi(req, res, url) {
     return item ? json(res, 200, { item: item }) : json(res, 404, { error: 'Not found.' });
   }
   if (id && m === 'DELETE') {
+    if (type === 'client' && (await desk.list('quote', { client_id: id })).some(function (q) { return q.status === 'accepted'; })) {
+      return json(res, 409, { error: 'This client has signed quotes, which are kept as records. Set their status to Past instead.' });
+    }
     const before = type === 'asset' ? await desk.get('asset', id) : null;
     await desk.remove(type, id);
     if (before) await syncHealthReports(before.client_id);
     return json(res, 200, { ok: true });
   }
   return json(res, 405, { error: 'Method not allowed' });
+}
+
+// ---------- Quotes ----------
+// Quotes are written in the Desk, sent to the client as a private link (/quote/?t=…), and signed there with a drawn
+// signature. Signing records who, when, from where and exactly what (a fingerprint of the quote, the chosen add-ons
+// and the terms version), then bills the quote's payment schedule:
+//   "on signing" payments (and dated ones whose date has passed) are invoiced and emailed straight away,
+//   dated payments are invoiced on their date by the scheduler below, milestone payments wait for "Bill Now",
+//   monthly lines start a Stripe subscription (send-invoice, on the quote's monthly start date).
+const quotesLib = require('./lib/quotes');
+const QUOTE_TOKEN_RE = /^[A-Za-z0-9_-]{24,64}$/;
+const SIGNATURE_MAX = 300 * 1024;
+const quoteLocks = new Set();
+
+function ipOf(req) { return (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim().slice(0, 64); }
+function addDays(dateStr, n) { const d = new Date(dateStr + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+function longDate(s) { return s ? new Date(String(s).length === 10 ? s + 'T12:00:00Z' : s).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: String(s).length === 10 ? 'UTC' : 'America/New_York' }) : ''; }
+function stamp(iso) { return new Date(iso).toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York', timeZoneName: 'short' }); }
+function withEvent(q, what, extra) { return (q.events || []).concat([Object.assign({ at: new Date().toISOString(), what: what }, extra || {})]).slice(-100); }
+function quoteUrl(origin, q) { return origin + '/quote/?t=' + q.token; }
+function publicOrigin() { return SITE_URL || 'https://' + PUBLIC_DOMAIN; }
+function quoteState(q) {
+  if ((q.status === 'sent' || q.status === 'viewed') && q.valid_until && q.valid_until < deskLib.localDate()) return 'expired';
+  return q.status || 'draft';
+}
+function clientName(c) { return c ? (c.company || c.name || '') : ''; }
+function escHtml(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+async function currentTerms() {
+  const all = await desk.allOf('terms');
+  if (!all.length) return desk.create('terms', { version: 1, body: quotesLib.DEFAULT_TERMS, note: 'Starting draft' }, {});
+  return all.sort(function (a, b) { return b.version - a.version; })[0];
+}
+async function termsVersion(v) {
+  return (await desk.allOf('terms')).find(function (t) { return t.version === v; }) || null;
+}
+async function findQuoteByToken(token) {
+  if (!QUOTE_TOKEN_RE.test(token || '')) return null;
+  return (await desk.allOf('quote')).find(function (q) { return q.token && safeEqual(q.token, token); }) || null;
+}
+
+// Email through the Apps Script (same web app as invoice emails). Returns its reply (which may carry a PDF).
+async function quoteEmail(fields) {
+  if (!NOTIFY_URL) return null;
+  const r = await fetch(NOTIFY_URL, {
+    method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(Object.assign({ kind: 'quote_email', token: NOTIFY_TOKEN, livemode: String(LIVE) }, fields)),
+    signal: AbortSignal.timeout(30000)
+  });
+  const out = await r.json().catch(function () { return {}; });
+  if (!r.ok || out.ok !== true) throw new Error('quote email failed: ' + r.status + ' ' + (out.error || ''));
+  return out;
+}
+
+// ---------- what the client sees ----------
+function publicQuote(q, client, terms) {
+  const t = quotesLib.totals(q, q.acceptance ? q.acceptance.selected : []);
+  const state = quoteState(q);
+  const out = {
+    number: q.number, title: q.title, summary: q.summary || '', issued: q.issued, valid_until: q.valid_until, state: state,
+    prepared_by: q.prepared_by || '', client: { name: client ? client.name || '' : '', company: client ? client.company || '' : '', email: client ? client.email || '' : '' },
+    standard_rate: q.standard_rate, rate: q.rate, startup_discount_pct: q.startup_discount_pct || 0, days_until_due: q.days_until_due || 7,
+    items: (q.items || []).map(function (it) { return { id: it.id, name: it.name, description: it.description, timeline: it.timeline, pricing: it.pricing, hours: it.hours, amount: it.amount, billing: it.billing, optional: it.optional }; }),
+    schedule: q.schedule || [], monthly_start: q.monthly_start || null, key_dates: q.key_dates || [],
+    included: q.included || '', not_included: q.not_included || '', notes: q.notes || '',
+    terms: terms ? { version: terms.version, body: terms.body } : null,
+    totals: t, installments: quotesLib.installments(q, t.total),
+    trail: (q.events || []).filter(function (e) { return ['sent', 'viewed', 'accepted', 'declined'].indexOf(e.what) >= 0; }).map(function (e) { return { at: e.at, what: e.what, ip: e.what === 'accepted' ? e.ip : undefined }; })
+  };
+  if (q.acceptance) {
+    const a = q.acceptance;
+    out.acceptance = { name: a.name, title: a.title, email: a.email, at: a.at, ip: a.ip, user_agent: a.user_agent, signature: a.signature, selected: a.selected, fingerprint: a.fingerprint, terms_version: a.terms_version };
+    out.invoices = (q.billing || []).map(function (b) { return { label: b.label, amount: b.amount, status: b.status, date: b.date, pay_url: b.status === 'invoiced' ? b.pay_url : null }; });
+    out.monthly_billing = q.monthly_billing ? { status: q.monthly_billing.status, start: q.monthly_billing.start, amount: q.monthly_billing.amount } : null;
+  }
+  if (q.declined) out.declined = { at: q.declined.at, reason: q.declined.reason };
+  return out;
+}
+
+async function quotePublicGet(req, res, url) {
+  if (limited(req, 60, 'quote')) return json(res, 429, { error: 'Too many requests. Please wait a minute.' });
+  await deskInit();
+  const q = await findQuoteByToken(url.searchParams.get('t'));
+  if (!q || q.status === 'draft' || q.status === 'void') return json(res, 404, { error: 'We couldn’t find that quote. The link may be incomplete or the quote was withdrawn.' });
+  let quote = q;
+  if (q.status === 'sent' && url.searchParams.get('preview') !== '1') {
+    quote = await desk.update('quote', q.id, { status: 'viewed', viewed_at: new Date().toISOString(), events: withEvent(q, 'viewed', { ip: ipOf(req) }) }) || q;
+  }
+  const client = await desk.get('client', q.client_id);
+  const terms = quote.acceptance ? await termsVersion(quote.acceptance.terms_version) : await currentTerms();
+  return json(res, 200, { quote: publicQuote(quote, client, terms), testMode: !LIVE && Boolean(SECRET) });
+}
+
+function validSignature(s) {
+  if (typeof s !== 'string' || s.length > SIGNATURE_MAX || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(s)) return false;
+  const buf = Buffer.from(s.slice(22), 'base64');
+  return buf.length > 200 && buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+}
+
+async function quoteAccept(req, res) {
+  if (!sameOrigin(req)) return json(res, 403, { error: 'Forbidden' });
+  if (limited(req, 10, 'quote-accept')) return json(res, 429, { error: 'Too many attempts. Please wait a minute.' });
+  const body = await readJson(req, SIGNATURE_MAX + 16384);
+  if (!body) return json(res, 400, { error: 'Invalid request.' });
+  await deskInit();
+  const q = await findQuoteByToken(body.t);
+  if (!q || q.status === 'draft' || q.status === 'void') return json(res, 404, { error: 'We couldn’t find that quote.' });
+  if (q.status === 'accepted') return json(res, 409, { error: 'This quote has already been signed.' });
+  if (q.status === 'declined') return json(res, 409, { error: 'This quote was declined. Email hello@aetheradigital.com and we’ll send a new one.' });
+  if (quoteState(q) === 'expired') return json(res, 409, { error: 'This quote expired on ' + longDate(q.valid_until) + '. Email hello@aetheradigital.com and we’ll send an updated one.' });
+  const name = clip(body.name, 120); const title = clip(body.title, 120); const email = clip(body.email, 200).toLowerCase();
+  if (!name || name.length < 2) return json(res, 400, { error: 'Type your full name.', field: 'name' });
+  if (!EMAIL_RE.test(email)) return json(res, 400, { error: 'Enter your email address so we can send your signed copy.', field: 'email' });
+  if (!validSignature(body.signature)) return json(res, 400, { error: 'Draw your signature in the box.', field: 'signature' });
+  if (body.agree_terms !== true) return json(res, 400, { error: 'Please confirm you agree to the Terms of Service.', field: 'agree_terms' });
+  if (body.agree_esign !== true) return json(res, 400, { error: 'Please confirm you agree to sign electronically.', field: 'agree_esign' });
+  const optional = (q.items || []).filter(function (it) { return it.optional; }).map(function (it) { return it.id; });
+  const selected = Array.isArray(body.selected) ? body.selected.filter(function (id) { return optional.indexOf(id) >= 0; }) : [];
+  const terms = await currentTerms();
+  if (Number(body.terms_version) !== terms.version) return json(res, 409, { error: 'Our Terms of Service were just updated. Please reload the page, review them and sign again.', reload: true });
+  const t = quotesLib.totals(q, selected);
+  if (Number(body.total_seen) !== t.total || Number(body.monthly_seen || 0) !== t.monthly) return json(res, 409, { error: 'This quote was just updated. Please reload the page and review it before signing.', reload: true });
+  if (t.total <= 0 && t.monthly <= 0) return json(res, 400, { error: 'This quote has no priced items yet. Email hello@aetheradigital.com.' });
+  if (quoteLocks.has(q.id)) return json(res, 409, { error: 'Already signing. Please wait a moment.' });
+  quoteLocks.add(q.id);
+  try {
+    const now = new Date().toISOString();
+    const acceptance = { name: name, title: title, email: email, signature: body.signature, selected: selected, at: now, ip: ipOf(req),
+      user_agent: clip(req.headers['user-agent'], 300), terms_version: terms.version, fingerprint: quotesLib.fingerprint(q, selected, t, terms),
+      total: t.total, monthly: t.monthly };
+    // Record the signature first, so it's kept even if billing below has trouble.
+    let quote = await desk.update('quote', q.id, { status: 'accepted', acceptance: acceptance, events: withEvent(q, 'accepted', { ip: acceptance.ip, by: name }) });
+    const client = await desk.get('client', q.client_id);
+    const changes = {};
+    if (client && ['lead', 'prospect', 'proposal'].indexOf(client.status) >= 0) changes.status = 'active';
+    if (client && !client.email) changes.email = email;
+    if (client && t.monthly && !client.monthly_value) changes.monthly_value = t.monthly / 100;
+    if (client && Object.keys(changes).length) await desk.update('client', client.id, changes);
+    const fresh = client ? Object.assign({}, client, changes) : null;
+    quote = await billAcceptedQuote(quote, fresh, t);
+    sendSignedCopy(quote, fresh, terms).catch(function (e) { console.error('quote_signed_email_failed', q.id, e.message); });
+    console.log('quote_accepted ' + JSON.stringify({ id: q.id, number: q.number, total: t.total, monthly: t.monthly }));
+    return json(res, 200, { quote: publicQuote(quote, fresh, terms) });
+  } finally { quoteLocks.delete(q.id); }
+}
+
+async function quoteDecline(req, res) {
+  if (!sameOrigin(req)) return json(res, 403, { error: 'Forbidden' });
+  if (limited(req, 10, 'quote-accept')) return json(res, 429, { error: 'Too many attempts. Please wait a minute.' });
+  const body = await readJson(req, 8192);
+  if (!body) return json(res, 400, { error: 'Invalid request.' });
+  await deskInit();
+  const q = await findQuoteByToken(body.t);
+  if (!q || q.status === 'draft' || q.status === 'void') return json(res, 404, { error: 'We couldn’t find that quote.' });
+  if (q.status === 'accepted' || q.status === 'declined') return json(res, 409, { error: 'This quote has already been ' + q.status + '.' });
+  const declined = { at: new Date().toISOString(), reason: clip(body.reason, 1000), ip: ipOf(req) };
+  const quote = await desk.update('quote', q.id, { status: 'declined', declined: declined, events: withEvent(q, 'declined', { ip: declined.ip }) });
+  const client = await desk.get('client', q.client_id);
+  quoteEmail({ to: 'hello@aetheradigital.com', subject: 'Quote declined: ' + q.number + ' (' + clientName(client) + ')', heading: 'Quote declined',
+    intro: clientName(client) + ' declined quote ' + q.number + ' (' + q.title + ').' + (declined.reason ? ' Their note: “' + declined.reason + '”' : ''), url: publicOrigin() + '/quote/?t=' + q.token + '&preview=1', button: 'View Quote' })
+    .catch(function (e) { console.error('quote_decline_email_failed', e.message); });
+  return json(res, 200, { quote: publicQuote(quote, client, await currentTerms()) });
+}
+
+// ---------- billing ----------
+function billingEmail(q, client) { return (client && client.email) || (q.acceptance && q.acceptance.email) || ''; }
+async function issueInstallment(q, client, b) {
+  if (!SECRET) return Object.assign({}, b, { status: 'failed', error: 'Stripe isn’t set up on the server, so this invoice wasn’t created.' });
+  const t = quotesLib.totals(q, q.acceptance.selected);
+  try {
+    const inv = await createInvoice({
+      email: billingEmail(q, client), name: (client && client.name) || q.acceptance.name, company: (client && client.company) || '',
+      memo: q.title + ' · Quote ' + q.number, days: q.days_until_due || 7, source: 'aethera_quote',
+      items: [{ description: q.title + ': ' + b.label + (b.percent < 100 ? ' (' + b.percent + '% of ' + money(t.total, 'usd') + ')' : ''), quantity: 1, cents: b.amount }],
+      metadata: { quote_id: q.id, quote_number: q.number, installment: String(b.index) }
+    });
+    const out = Object.assign({}, b, { status: 'invoiced', invoice_id: inv.id, invoice_number: inv.number, pay_url: publicOrigin() + invoicePath(inv.id), invoiced_at: new Date().toISOString(), error: null });
+    try { out.emailed_via = await sendInvoiceEmail(inv, publicOrigin()); } catch (e) { out.email_error = 'Invoice created but the email didn’t send. Resend it from Invoices.'; console.error('quote_invoice_email_failed', e.message); }
+    return out;
+  } catch (e) {
+    return Object.assign({}, b, { status: 'failed', error: e.stripe ? 'Stripe: ' + e.message : e.message });
+  }
+}
+
+async function startMonthly(q, client, t) {
+  const items = quotesLib.includedItems(q, q.acceptance.selected).filter(function (it) { return it.billing === 'monthly'; });
+  const today = deskLib.localDate();
+  const start = q.monthly_start && q.monthly_start > today ? q.monthly_start : today;
+  const base = { amount: t.monthly, start: start };
+  if (!SECRET) return Object.assign(base, { status: 'failed', error: 'Stripe isn’t set up on the server, so the monthly billing wasn’t started.' });
+  try {
+    const customer = await findOrCreateCustomer(billingEmail(q, client), (client && client.name) || q.acceptance.name, (client && client.company) || '', 'aethera_quote');
+    const lines = [];
+    for (const it of items) {
+      const product = await stripe('POST', '/v1/products', { name: it.name, description: it.description || undefined, metadata: { quote_id: q.id, quote_number: q.number } });
+      lines.push({ price_data: { currency: 'usd', product: product.id, unit_amount: t.lines[it.id].amount, recurring: { interval: 'month' } }, quantity: 1 });
+    }
+    const startSec = start === today ? 'now' : Math.floor(Date.parse(start + 'T14:00:00Z') / 1000); // 9–10am Eastern on the start date
+    const sched = await stripe('POST', '/v1/subscription_schedules', {
+      customer: customer.id, start_date: startSec, end_behavior: 'release',
+      default_settings: { collection_method: 'send_invoice', invoice_settings: { days_until_due: q.days_until_due || 7 }, description: q.title + ' · Quote ' + q.number },
+      phases: [{ items: lines, metadata: { quote_id: q.id, quote_number: q.number, plan: 'quote_monthly' }, automatic_tax: AUTOMATIC_TAX ? { enabled: true } : undefined }],
+      metadata: { quote_id: q.id, quote_number: q.number }
+    });
+    return Object.assign(base, { status: start === today ? 'active' : 'scheduled', schedule_id: sched.id, subscription_id: sched.subscription || null, error: null });
+  } catch (e) {
+    return Object.assign(base, { status: 'failed', error: e.stripe ? 'Stripe: ' + e.message : e.message });
+  }
+}
+
+async function billAcceptedQuote(q, client, t) {
+  const today = deskLib.localDate();
+  const billing = [];
+  for (const p of quotesLib.installments(q, t.total)) {
+    let b = Object.assign({}, p, { status: p.when === 'milestone' ? 'milestone' : p.when === 'date' && p.date > today ? 'scheduled' : 'due' });
+    if (b.status === 'due') b = await issueInstallment(q, client, b);
+    billing.push(b);
+  }
+  const monthly = t.monthly > 0 ? await startMonthly(q, client, t) : null;
+  const events = withEvent(q, 'billed', { invoices: billing.filter(function (b) { return b.status === 'invoiced'; }).length, failed: billing.filter(function (b) { return b.status === 'failed'; }).length + (monthly && monthly.status === 'failed' ? 1 : 0) });
+  return desk.update('quote', q.id, { billing: billing, monthly_billing: monthly, events: events });
+}
+
+// Dated payments: invoice them on (or after) their date. Runs with the other schedules.
+async function runQuoteBilling() {
+  const today = deskLib.localDate();
+  for (const q of await desk.allOf('quote')) {
+    if (q.status !== 'accepted' || !Array.isArray(q.billing) || quoteLocks.has(q.id)) continue;
+    const due = q.billing.filter(function (b) { return b.status === 'scheduled' && b.date && b.date <= today; });
+    if (!due.length) continue;
+    quoteLocks.add(q.id);
+    try {
+      const client = await desk.get('client', q.client_id);
+      const billing = [];
+      for (const b of q.billing) billing.push(due.indexOf(b) >= 0 ? await issueInstallment(q, client, b) : b);
+      await desk.update('quote', q.id, { billing: billing, events: withEvent(q, 'billed', { scheduled: due.length }) });
+      console.log('quote_scheduled_billing ' + JSON.stringify({ id: q.id, issued: due.length }));
+    } finally { quoteLocks.delete(q.id); }
+  }
+}
+function scheduleQuoteBilling() {
+  if (process.env.QUOTE_BILLING === 'off') return;
+  const run = function () { deskInit().then(runQuoteBilling).catch(function (e) { console.error('quote_billing_failed', e.message); }); };
+  setTimeout(run, 8000).unref();
+  setInterval(run, 3600 * 1000).unref();
+}
+
+// ---------- signed copy ----------
+function signedQuoteHtml(q, client, terms) {
+  const a = q.acceptance; const t = quotesLib.totals(q, a.selected);
+  const m = function (c) { return money(c, 'usd'); };
+  const items = quotesLib.includedItems(q, a.selected);
+  const row = function (it) {
+    const l = t.lines[it.id];
+    return '<tr><td><b>' + escHtml(it.name) + '</b>' + (it.optional ? ' <span class="tag">Add-on</span>' : '') + (it.description ? '<br><span class="mute">' + escHtml(it.description) + '</span>' : '') + (it.timeline ? '<br><span class="mute">' + escHtml(it.timeline) + '</span>' : '') + '</td>' +
+      '<td class="n">' + (it.pricing === 'hours' ? escHtml(it.hours) + ' h' : '—') + '</td><td class="n">' + m(l.amount) + (it.billing === 'monthly' ? '/mo' : '') + '</td></tr>';
+  };
+  const oneTime = items.filter(function (it) { return it.billing !== 'monthly'; });
+  const monthly = items.filter(function (it) { return it.billing === 'monthly'; });
+  const sched = quotesLib.installments(q, t.total);
+  const whenText = function (s) { return s.when === 'signing' ? 'On signing' : s.when === 'date' ? longDate(s.date) : 'At milestone'; };
+  const trail = (q.events || []).filter(function (e) { return ['sent', 'viewed', 'accepted'].indexOf(e.what) >= 0; });
+  return '<!doctype html><html><head><meta charset="utf-8"><title>' + escHtml(q.number) + ' signed</title><style>' +
+    'body{font-family:Helvetica,Arial,sans-serif;color:#111;font-size:11pt;line-height:1.45;margin:36px}h1{font-size:22pt;font-weight:300;margin:4px 0 2px}h2{font-size:10pt;letter-spacing:2px;text-transform:uppercase;margin:22px 0 8px;border-bottom:1px solid #111;padding-bottom:4px}' +
+    'table{width:100%;border-collapse:collapse}td,th{padding:6px 4px;border-bottom:1px solid #ddd;vertical-align:top;text-align:left}.n{text-align:right;white-space:nowrap}.mute{color:#666;font-size:9.5pt}.tag{font-size:8pt;border:1px solid #999;border-radius:8px;padding:0 5px}' +
+    '.box{background:#F4F2EE;padding:12px 14px;margin:10px 0}.sig img{height:70px}.small{font-size:8.5pt;color:#555;word-break:break-all}.eye{font-size:9pt;letter-spacing:3px;text-transform:uppercase;color:#555}' +
+    '</style></head><body>' +
+    '<p class="eye">Aethera Digital · Signed Quote</p><h1>' + escHtml(q.title) + '</h1><p class="mute">Quote ' + escHtml(q.number) + ' · Issued ' + escHtml(longDate(q.issued)) + '</p>' +
+    (q.summary ? '<p>' + escHtml(q.summary) + '</p>' : '') +
+    '<table><tr><td><b>Prepared for</b><br>' + escHtml(client ? client.name || '' : '') + (client && client.company ? '<br>' + escHtml(client.company) : '') + '</td><td><b>Prepared by</b><br>' + escHtml(q.prepared_by || 'Aethera Digital') + '<br>Aethera Digital · hello@aetheradigital.com</td></tr></table>' +
+    (oneTime.length ? '<h2>Project Scope</h2><table><tr><th>Phase</th><th class="n">Hours</th><th class="n">Amount</th></tr>' + oneTime.map(row).join('') + '</table>' +
+      '<div class="box"><table>' +
+      (t.rate_discount ? '<tr><td>Standard price (' + t.hours + ' h × $' + q.standard_rate + '/hr)</td><td class="n">' + m(t.standard) + '</td></tr><tr><td>Rate discount ($' + q.standard_rate + ' → $' + q.rate + '/hr)</td><td class="n">−' + m(t.rate_discount) + '</td></tr>' : '<tr><td>Subtotal</td><td class="n">' + m(t.subtotal) + '</td></tr>') +
+      (t.startup_discount ? '<tr><td>Startup discount (' + t.startup_pct + '%, −' + t.startup_hours + ' h)</td><td class="n">−' + m(t.startup_discount) + '</td></tr>' : '') +
+      '<tr><td><b>Project total</b></td><td class="n"><b>' + m(t.total) + '</b></td></tr></table></div>' : '') +
+    (monthly.length ? '<h2>Monthly Services</h2><table>' + monthly.map(row).join('') + '<tr><td><b>Monthly total</b> (starts ' + escHtml(longDate(q.monthly_start && q.monthly_start > a.at.slice(0, 10) ? q.monthly_start : a.at.slice(0, 10))) + ', month-to-month)</td><td></td><td class="n"><b>' + m(t.monthly) + '/mo</b></td></tr></table>' : '') +
+    (sched.length ? '<h2>Payment Schedule</h2><table>' + sched.map(function (s) { return '<tr><td>' + escHtml(s.label) + '</td><td>' + s.percent + '%</td><td>' + escHtml(whenText(s)) + '</td><td class="n">' + m(s.amount) + '</td></tr>'; }).join('') + '</table>' : '') +
+    (q.included ? '<h2>Included</h2><p style="white-space:pre-line">' + escHtml(q.included) + '</p>' : '') +
+    (q.not_included ? '<h2>Not Included</h2><p style="white-space:pre-line">' + escHtml(q.not_included) + '</p>' : '') +
+    (q.notes ? '<h2>Notes</h2><p style="white-space:pre-line">' + escHtml(q.notes) + '</p>' : '') +
+    '<h2>Terms of Service (Version ' + terms.version + ')</h2><p style="white-space:pre-line;font-size:9.5pt">' + escHtml(terms.body) + '</p>' +
+    '<h2>Acceptance</h2><table><tr><td class="sig" style="width:55%"><img src="' + a.signature + '" alt="Signature"><br><b>' + escHtml(a.name) + '</b>' + (a.title ? ', ' + escHtml(a.title) : '') + '<br>' + escHtml(a.email) + '<br>Signed ' + escHtml(stamp(a.at)) + '</td>' +
+    '<td><b>' + escHtml(q.prepared_by || 'Aethera Digital') + '</b><br>Aethera Digital<br>Issued ' + escHtml(longDate(q.issued)) + '</td></tr></table>' +
+    '<h2>Audit Trail</h2><table class="small">' + trail.map(function (e) { return '<tr><td>' + escHtml(stamp(e.at)) + '</td><td>' + escHtml({ sent: 'Sent to client', viewed: 'Opened by client', accepted: 'Signed by ' + a.name }[e.what]) + (e.ip ? ' · IP ' + escHtml(e.ip) : '') + '</td></tr>'; }).join('') + '</table>' +
+    '<p class="small">Browser: ' + escHtml(a.user_agent) + '<br>Document fingerprint (SHA-256): ' + escHtml(a.fingerprint) + '</p>' +
+    '</body></html>';
+}
+
+async function sendSignedCopy(q, client, terms) {
+  if (!NOTIFY_URL) return;
+  const a = q.acceptance; const t = quotesLib.totals(q, a.selected);
+  const to = [a.email]; if (client && client.email && client.email.toLowerCase() !== a.email) to.push(client.email);
+  const first = (q.billing || []).find(function (b) { return b.status === 'invoiced'; });
+  const out = await quoteEmail({
+    to: to.join(','), cc: 'hello@aetheradigital.com', name: a.name,
+    subject: 'Signed: ' + q.title + ' (Quote ' + q.number + ')', heading: 'Thank you. Your quote is signed.',
+    intro: 'Here’s your signed copy of quote ' + q.number + ' for ' + q.title + '.' + (first ? ' Your first invoice (' + money(first.amount, 'usd') + ') is on its way in a separate email.' : ''),
+    amount_label: t.total ? 'Project Total' : 'Monthly', amount: t.total ? money(t.total, 'usd') : money(t.monthly, 'usd') + '/mo',
+    url: quoteUrl(publicOrigin(), q), button: 'View Signed Quote', record_html: signedQuoteHtml(q, client, terms), pdf_name: q.number + ' signed.pdf'
+  });
+  if (out && out.pdf && client) {
+    const buf = Buffer.from(out.pdf, 'base64');
+    if (buf.length && buf.length < MAX_FILE_BYTES) {
+      const f = await desk.putFile({ client_id: client.id, name: q.number + ' signed.pdf', mime: 'application/pdf', category: 'contract', content: buf });
+      await desk.update('quote', q.id, { signed_file_id: f.id });
+    }
+  }
+}
+
+// ---------- Desk (admin) ----------
+function quoteSummary(q, clientsById) {
+  const sel = q.acceptance ? q.acceptance.selected : [];
+  const t = quotesLib.totals(q, sel);
+  return { id: q.id, number: q.number, title: q.title, client_id: q.client_id, client: clientName(clientsById[q.client_id]), state: quoteState(q), status: q.status,
+    total: t.total, monthly: t.monthly, issued: q.issued, valid_until: q.valid_until, sent_at: q.sent_at || null, viewed_at: q.viewed_at || null,
+    accepted_at: q.acceptance ? q.acceptance.at : null, created_at: q.created_at, updated_at: q.updated_at,
+    needs_billing: (q.billing || []).some(function (b) { return b.status === 'milestone' || b.status === 'failed'; }) || Boolean(q.monthly_billing && q.monthly_billing.status === 'failed') };
+}
+
+async function quotesApi(req, res, p, m, url) {
+  let mm;
+  if (p === '/quotes' && m === 'GET') {
+    const clients = {}; (await desk.allOf('client')).forEach(function (c) { clients[c.id] = c; });
+    const cid = url.searchParams.get('client_id');
+    const list = (await desk.allOf('quote')).filter(function (q) { return !cid || q.client_id === cid; })
+      .sort(function (a, b) { return a.created_at < b.created_at ? 1 : -1; }).map(function (q) { return quoteSummary(q, clients); });
+    return json(res, 200, { items: list });
+  }
+  if (p === '/quotes' && m === 'POST') {
+    const body = await readJson(req, 131072);
+    const v = quotesLib.validateQuote(body, false);
+    if (v.error) return json(res, 400, { error: v.error });
+    const client = await desk.get('client', v.data.client_id);
+    if (!client) return json(res, 400, { error: 'Client not found.' });
+    const today = deskLib.localDate();
+    const all = await desk.allOf('quote');
+    const d = Object.assign({
+      number: quotesLib.nextNumber(client, all, today.slice(0, 4)), issued: today, valid_until: addDays(today, 30),
+      standard_rate: 50, startup_discount_pct: 0, days_until_due: 7, items: [], key_dates: [], prepared_by: 'Nicholas P. Stevens',
+      schedule: [{ label: 'Deposit', percent: 30, when: 'signing', date: null }, { label: 'Midpoint milestone', percent: 30, when: 'milestone', date: null }, { label: 'Launch', percent: 40, when: 'milestone', date: null }],
+      included: '', not_included: 'Third-party platform fees (software, domains, hosting, ad spend), which the client pays directly.\nOngoing maintenance after handoff.'
+    }, v.data);
+    if (!v.data.number) d.number = quotesLib.nextNumber(client, all, today.slice(0, 4));
+    if (d.rate === undefined || d.rate === null) d.rate = d.standard_rate;
+    d.status = 'draft'; d.events = [{ at: new Date().toISOString(), what: 'created' }];
+    return json(res, 200, { item: await desk.create('quote', d, { client_id: client.id }) });
+  }
+  mm = p.match(/^\/quotes\/(quo_[A-Za-z0-9_-]+)(?:\/([a-z-]+)(?:\/(\d+))?)?$/);
+  if (mm) {
+    const q = await desk.get('quote', mm[1]);
+    if (!q) return json(res, 404, { error: 'Quote not found.' });
+    const action = mm[2] || '';
+    const client = await desk.get('client', q.client_id);
+    if (!action && m === 'GET') {
+      const terms = q.acceptance ? await termsVersion(q.acceptance.terms_version) : await currentTerms();
+      const allSel = (q.items || []).filter(function (it) { return it.optional; }).map(function (it) { return it.id; });
+      return json(res, 200, { item: q, state: quoteState(q), client: client, terms: terms ? { version: terms.version } : null,
+        totals: quotesLib.totals(q, q.acceptance ? q.acceptance.selected : []), totals_all: quotesLib.totals(q, allSel),
+        url: q.token ? quoteUrl(publicOrigin(), q) : null, email: Boolean(NOTIFY_URL), payments: Boolean(SECRET) });
+    }
+    if (!action && m === 'PATCH') {
+      if (['accepted', 'declined', 'void'].indexOf(q.status) >= 0) return json(res, 409, { error: 'A ' + q.status + ' quote can’t be edited. Duplicate it to make a new version.' });
+      const body = await readJson(req, 131072);
+      if (body && q.status !== 'draft') delete body.client_id;
+      const v = quotesLib.validateQuote(body, true);
+      if (v.error) return json(res, 400, { error: v.error });
+      if (v.data.client_id && !(await desk.get('client', v.data.client_id))) return json(res, 400, { error: 'Client not found.' });
+      if (q.status !== 'draft') v.data.events = withEvent(q, 'edited');
+      return json(res, 200, { item: await desk.update('quote', q.id, v.data) });
+    }
+    if (!action && m === 'DELETE') {
+      if (q.status === 'accepted') return json(res, 409, { error: 'Signed quotes are kept as a record and can’t be deleted.' });
+      await desk.remove('quote', q.id); return json(res, 200, { ok: true });
+    }
+    if (m !== 'POST') return json(res, 405, { error: 'Method not allowed' });
+    if (action === 'send') {
+      if (['draft', 'sent', 'viewed'].indexOf(q.status) < 0) return json(res, 409, { error: 'Only draft or open quotes can be sent.' });
+      const t = quotesLib.totals(q, (q.items || []).filter(function (it) { return it.optional; }).map(function (it) { return it.id; }));
+      if (t.total <= 0 && t.monthly <= 0) return json(res, 400, { error: 'Add at least one priced line before sending.' });
+      if (q.valid_until && q.valid_until < deskLib.localDate()) return json(res, 400, { error: 'The valid-through date has passed. Change it before sending.' });
+      const body = (await readJson(req, 4096)) || {};
+      const to = clip(body.to || (client && client.email), 200).toLowerCase();
+      const emailIt = body.email !== false;
+      if (emailIt && !EMAIL_RE.test(to)) return json(res, 400, { error: 'Add the client’s email address (on their client record) to email the quote.' });
+      const token = q.token || crypto.randomBytes(24).toString('base64url');
+      const link = publicOrigin() + '/quote/?t=' + token;
+      let emailed = false; let emailError = null;
+      if (emailIt) {
+        if (!NOTIFY_URL) emailError = 'Email isn’t set up on the server (PAYMENTS_NOTIFY_URL). Copy the link and send it yourself.';
+        else {
+          const t0 = quotesLib.totals(q, []);
+          try {
+            await quoteEmail({ to: to, name: client ? client.name || '' : '', subject: 'Quote ' + q.number + ' from Aethera Digital: ' + q.title, heading: 'Your quote is ready',
+              intro: 'Here’s your quote for ' + q.title + '. You can review the scope, choose any add-ons, read the terms and sign online.' + (q.valid_until ? ' This quote is valid through ' + longDate(q.valid_until) + '.' : ''),
+              amount_label: t0.total ? 'Project Total' : 'Monthly', amount: t0.total ? money(t0.total, 'usd') : money(t0.monthly, 'usd') + '/mo', url: link, button: 'Review & Sign' });
+            emailed = true;
+          } catch (e) { emailError = 'The email didn’t send. Copy the link and send it yourself.'; console.error('quote_send_email_failed', e.message); }
+        }
+      }
+      const upd = { token: token, status: q.status === 'draft' ? 'sent' : q.status, sent_at: q.sent_at || new Date().toISOString(), events: withEvent(q, 'sent', { to: emailed ? to : null }) };
+      const item = await desk.update('quote', q.id, upd);
+      if (client && ['lead', 'prospect'].indexOf(client.status) >= 0) await desk.update('client', client.id, { status: 'proposal' });
+      return json(res, 200, { item: item, url: link, emailed: emailed, email_error: emailError });
+    }
+    if (action === 'void') {
+      if (q.status === 'accepted') return json(res, 409, { error: 'Signed quotes can’t be withdrawn. Void their invoices from Invoices instead.' });
+      return json(res, 200, { item: await desk.update('quote', q.id, { status: 'void', events: withEvent(q, 'withdrawn') }) });
+    }
+    if (action === 'duplicate') {
+      const today = deskLib.localDate();
+      const copyFields = ['title', 'summary', 'standard_rate', 'rate', 'startup_discount_pct', 'days_until_due', 'items', 'schedule', 'key_dates', 'included', 'not_included', 'notes', 'prepared_by', 'monthly_start'];
+      const d = { number: quotesLib.nextNumber(client, await desk.allOf('quote'), today.slice(0, 4)), issued: today, valid_until: addDays(today, 30), status: 'draft', events: [{ at: new Date().toISOString(), what: 'created', from: q.number }] };
+      copyFields.forEach(function (k) { if (q[k] !== undefined) d[k] = q[k]; });
+      return json(res, 200, { item: await desk.create('quote', d, { client_id: q.client_id }) });
+    }
+    if (action === 'bill') {
+      if (q.status !== 'accepted') return json(res, 409, { error: 'Only signed quotes can be billed.' });
+      const i = Number(mm[3]);
+      const b = (q.billing || [])[i];
+      if (!b) return json(res, 404, { error: 'Payment not found.' });
+      if (b.status === 'invoiced') return json(res, 409, { error: 'That payment has already been invoiced.' });
+      if (quoteLocks.has(q.id)) return json(res, 409, { error: 'Billing is already running for this quote.' });
+      quoteLocks.add(q.id);
+      try {
+        const nb = await issueInstallment(q, client, b);
+        const billing = q.billing.slice(); billing[i] = nb;
+        const item = await desk.update('quote', q.id, { billing: billing, events: withEvent(q, 'billed', { installment: i }) });
+        if (nb.status === 'failed') return json(res, 502, { error: nb.error, item: item });
+        return json(res, 200, { item: item });
+      } finally { quoteLocks.delete(q.id); }
+    }
+    if (action === 'start-monthly') {
+      if (q.status !== 'accepted' || !q.monthly_billing || q.monthly_billing.status !== 'failed') return json(res, 409, { error: 'There’s no monthly billing to retry.' });
+      const mb = await startMonthly(q, client, quotesLib.totals(q, q.acceptance.selected));
+      const item = await desk.update('quote', q.id, { monthly_billing: mb });
+      return mb.status === 'failed' ? json(res, 502, { error: mb.error, item: item }) : json(res, 200, { item: item });
+    }
+    if (action === 'resend-signed') {
+      if (q.status !== 'accepted') return json(res, 409, { error: 'This quote hasn’t been signed.' });
+      if (!NOTIFY_URL) return json(res, 503, { error: 'Email isn’t set up on the server.' });
+      try { await sendSignedCopy(q, client, await termsVersion(q.acceptance.terms_version)); } catch (e) { return json(res, 502, { error: 'The email didn’t send: ' + e.message }); }
+      return json(res, 200, { item: await desk.get('quote', q.id) });
+    }
+    return json(res, 404, { error: 'Not found' });
+  }
+  if (p === '/terms' && m === 'GET') {
+    const cur = await currentTerms();
+    const all = (await desk.allOf('terms')).sort(function (a, b) { return b.version - a.version; });
+    return json(res, 200, { current: cur, versions: all });
+  }
+  if (p === '/terms' && m === 'POST') {
+    const body = await readJson(req, 65536);
+    const text = clip(body && body.body, 30000);
+    if (text.length < 20) return json(res, 400, { error: 'Write out the terms.' });
+    const cur = await currentTerms();
+    if (text === cur.body) return json(res, 400, { error: 'No changes to save.' });
+    const item = await desk.create('terms', { version: cur.version + 1, body: text, note: clip(body.note, 200) }, {});
+    return json(res, 200, { current: item });
+  }
+  if (p === '/catalog' && m === 'GET') {
+    let items = await desk.allOf('catalog');
+    if (!items.length && !(await desk.seen('catalog-seeded'))) {
+      for (const it of quotesLib.DEFAULT_CATALOG) await desk.create('catalog', quotesLib.validateCatalogItem(it).data, {});
+      await desk.markSeen('catalog-seeded');
+      items = await desk.allOf('catalog');
+    }
+    return json(res, 200, { items: items.sort(function (a, b) { return a.name.localeCompare(b.name); }) });
+  }
+  if (p === '/catalog' && m === 'POST') {
+    const v = quotesLib.validateCatalogItem(await readJson(req, 16384));
+    if (v.error) return json(res, 400, { error: v.error });
+    return json(res, 200, { item: await desk.create('catalog', v.data, {}) });
+  }
+  mm = p.match(/^\/catalog\/(cat_[A-Za-z0-9_-]+)$/);
+  if (mm && m === 'PATCH') {
+    const v = quotesLib.validateCatalogItem(await readJson(req, 16384));
+    if (v.error) return json(res, 400, { error: v.error });
+    const item = await desk.update('catalog', mm[1], v.data);
+    return item ? json(res, 200, { item: item }) : json(res, 404, { error: 'Not found.' });
+  }
+  if (mm && m === 'DELETE') { await desk.remove('catalog', mm[1]); return json(res, 200, { ok: true }); }
+  return null;
 }
 
 // ---------- Monthly report drafts ----------
@@ -1324,6 +1820,14 @@ async function stripeWebhook(req, res) {
   if (!event || typeof event.id !== 'string' || typeof event.type !== 'string') return json(res, 400, { error: 'Invalid payload.' });
   if (handledEvents.has(event.id)) return json(res, 200, { received: true, duplicate: true });
 
+  if (event.type === 'invoice.finalized') {
+    const o = (event.data && event.data.object) || {};
+    const sd = o.parent && o.parent.subscription_details;
+    if (sd && sd.metadata && sd.metadata.quote_id && o.collection_method === 'send_invoice' && NOTIFY_URL && o.amount_due > 0) {
+      try { await sendInvoiceEmail(o, publicOrigin()); console.log('quote_monthly_invoice_emailed ' + o.id); }
+      catch (e) { console.error('quote_monthly_invoice_email_failed', o.id, e.message); return json(res, 500, { error: 'Could not email invoice.' }); }
+    }
+  }
   const rec = summarizeEvent(event);
   if (rec) {
     console.log('stripe_event ' + JSON.stringify(rec));
@@ -1420,6 +1924,9 @@ const server = http.createServer(async function (req, res) {
     if (p === '/api/invoice' && req.method === 'GET') return await getInvoice(req, res, url);
     if (p === '/api/invoice-lookup' && req.method === 'POST') return await lookupInvoice(req, res);
     if (p === '/api/subscribe' && req.method === 'POST') return await subscribe(req, res);
+    if (p === '/api/quote' && req.method === 'GET') return await quotePublicGet(req, res, url);
+    if (p === '/api/quote/accept' && req.method === 'POST') return await quoteAccept(req, res);
+    if (p === '/api/quote/decline' && req.method === 'POST') return await quoteDecline(req, res);
     if (p === '/api/stripe/webhook' && req.method === 'POST') return await stripeWebhook(req, res);
     if (p.startsWith('/api/collector/')) return await collectorApi(req, res, url);
     if (p.startsWith('/api/admin/')) return await adminApi(req, res, url);
@@ -1434,6 +1941,7 @@ const server = http.createServer(async function (req, res) {
 
 if (require.main === module) {
   scheduleReportDrafts();
+  scheduleQuoteBilling();
   server.listen(PORT, function () {
     console.log('aethera site listening on ' + PORT + (SECRET ? '' : ' (Stripe not configured)') + (ADMIN_PASSWORD ? '' : ' (admin disabled: set ADMIN_PASSWORD)'));
   });
