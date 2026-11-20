@@ -10,6 +10,7 @@ function doPost(e) {
   var p = (e && e.parameter) || {};
   if (p.kind === 'payment') return payment_(p);
   if (p.kind === 'invoice_email') return invoiceEmail_(p);
+  if (p.kind === 'quote_email') return quoteEmail_(p);
   if (p.company_site) return json_({ ok: true }); // spam trap
 
   var name = clip_(p.name, 200);
@@ -125,6 +126,46 @@ function invoiceEmail_(p) {
 
   MailApp.sendEmail({ to: to, replyTo: NOTIFY_TO, name: 'Aethera Digital', subject: subject, body: text, htmlBody: html });
   return json_({ ok: true });
+}
+
+// Quote emails from the Desk: "your quote is ready", the signed copy (with a PDF attached), and decline notices.
+// When record_html is sent, it's turned into a PDF, attached, and returned (base64) so the Desk can file it.
+function quoteEmail_(p) {
+  var expected = PropertiesService.getScriptProperties().getProperty('PAYMENTS_TOKEN');
+  if (!expected || p.token !== expected) return json_({ ok: false, error: 'unauthorized' });
+  var to = String(p.to || '').split(',').map(function (x) { return x.trim(); }).filter(function (x) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x); });
+  var url = String(p.url || '');
+  if (!to.length || !/^https:\/\//.test(url)) return json_({ ok: false, error: 'invalid' });
+
+  var test = p.livemode !== 'true';
+  var first = esc_(String(p.name || '').split(' ')[0]);
+  var subject = (test ? '[TEST] ' : '') + String(p.subject || 'Your quote from Aethera Digital');
+  var html =
+    '<div style="background:#000;padding:40px 16px;font-family:Avenir Next,Avenir,Helvetica,Arial,sans-serif">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:0 auto;background:#0B0B0E;border:1px solid #26262c;border-radius:24px">' +
+    '<tr><td style="padding:40px 40px 8px">' +
+    '<p style="margin:0;font-size:12px;letter-spacing:4px;text-transform:uppercase;color:#A3A3AD;font-weight:600">Aethera Digital' + (test ? ' &middot; test' : '') + '</p>' +
+    '<p style="margin:24px 0 0;font-size:26px;line-height:1.3;color:#fff;font-weight:300">' + esc_(p.heading || 'Your quote') + '</p>' +
+    '<p style="margin:16px 0 0;font-size:17px;line-height:1.6;color:#D6D6DC">' + (first ? 'Hi ' + first + ',<br>' : '') + esc_(p.intro || '') + '</p>' +
+    '</td></tr>' +
+    (p.amount ? '<tr><td style="padding:24px 40px 8px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#121217;border-radius:16px"><tr><td style="padding:24px">' +
+      '<p style="margin:0;font-size:12px;letter-spacing:3px;text-transform:uppercase;color:#A3A3AD;font-weight:600">' + esc_(p.amount_label || 'Total') + '</p>' +
+      '<p style="margin:6px 0 0;font-size:40px;font-weight:300;color:#fff;letter-spacing:-1px">' + esc_(p.amount) + '</p></td></tr></table></td></tr>' : '') +
+    '<tr><td style="padding:24px 40px 8px"><a href="' + esc_(url) + '" style="display:inline-block;background:#fff;color:#000;text-decoration:none;font-weight:700;font-size:16px;padding:16px 32px;border-radius:999px">' + esc_(p.button || 'View Quote') + '</a></td></tr>' +
+    '<tr><td style="padding:24px 40px 40px"><p style="margin:0;font-size:13px;line-height:1.6;color:#A3A3AD">Questions? Just reply to this email.<br>Aethera Digital &middot; aetheradigital.com</p></td></tr>' +
+    '</table></div>';
+  var text = (first ? 'Hi ' + first + ',\n\n' : '') + String(p.intro || '') + (p.amount ? '\n\n' + (p.amount_label || 'Total') + ': ' + p.amount : '') +
+    '\n\n' + (p.button || 'View') + ': ' + url + '\n\nQuestions? Just reply to this email.\nAethera Digital';
+
+  var opts = { to: to.join(','), replyTo: NOTIFY_TO, name: 'Aethera Digital', subject: subject, body: text, htmlBody: html };
+  if (p.cc) opts.cc = String(p.cc);
+  var pdf = null;
+  if (p.record_html) {
+    pdf = Utilities.newBlob(String(p.record_html), MimeType.HTML, 'record.html').getAs(MimeType.PDF).setName(String(p.pdf_name || 'Signed quote.pdf'));
+    opts.attachments = [pdf];
+  }
+  MailApp.sendEmail(opts);
+  return json_({ ok: true, pdf: pdf ? Utilities.base64Encode(pdf.getBytes()) : null });
 }
 
 function esc_(v) {

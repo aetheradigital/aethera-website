@@ -51,7 +51,8 @@ const fakeStripe = http.createServer((req, res) => {
     }
     if (req.url === '/notify') {
       if (failNotify) { res.statusCode = 500; return res.end('{"ok":false}'); }
-      notes.push(new URLSearchParams(body));
+      const n = new URLSearchParams(body); notes.push(n);
+      if (n.get('kind') === 'quote_email' && n.get('record_html')) return res.end(JSON.stringify({ ok: true, pdf: Buffer.from('%PDF-1.4 signed').toString('base64') }));
       return res.end('{"ok":true}');
     }
     const u = new URL(req.url, 'http://x');
@@ -69,6 +70,8 @@ const fakeStripe = http.createServer((req, res) => {
     if (m === 'POST' && p === '/v1/subscriptions') return send({ id: 'sub_1', latest_invoice: { confirmation_secret: { client_secret: 'pi_sub_secret_xyz' } } });
     if (m === 'POST' && p === '/v1/invoices') return send(Object.assign(INV(), { status: 'draft', number: null }));
     if (m === 'POST' && p === '/v1/invoiceitems') return send({ id: 'ii_1' });
+    if (m === 'POST' && p === '/v1/products') return send({ id: 'prod_1' });
+    if (m === 'POST' && p === '/v1/subscription_schedules') return send({ id: 'sub_sched_1', subscription: 'sub_q1' });
     if (m === 'POST' && /\/finalize$/.test(p)) return send(INV());
     if (m === 'POST' && /\/void$/.test(p)) return send(Object.assign(INV(), { status: 'void' }));
     if (m === 'POST' && /\/send$/.test(p)) return send(INV());
@@ -529,6 +532,127 @@ function request(port, method, p, body, headers) {
     assert.strictEqual((await dj('GET', '/files/' + fl.id)).status, 404);
     ok('desk: cross-origin writes and public-domain access refused; deleting a client removes its projects, tasks and files');
 
+    // ---------- quotes ----------
+    {
+      const Q = (method, p, body) => request(port, method, '/api/admin/desk' + p, body, A);
+      r = await Q('POST', '/clients', { name: 'Lee Park', company: 'Liberty Tool Company', email: 'lee@libertytool.com', status: 'prospect' });
+      const lcid = JSON.parse(r.body).item.id;
+      r = await Q('GET', '/catalog'); j = JSON.parse(r.body);
+      assert.ok(j.items.length >= 9 && j.items.some((x) => x.name === 'Website' && x.amount === 600 && x.billing === 'monthly'));
+      r = await Q('GET', '/terms'); j = JSON.parse(r.body);
+      assert.strictEqual(j.current.version, 1); assert.ok(/Electronic signatures/.test(j.current.body));
+      ok('quotes: service catalog and terms of service start from sensible defaults');
+
+      r = await Q('POST', '/quotes', { client_id: lcid, title: 'Tape Caddy Website', standard_rate: 50, rate: 30, startup_discount_pct: 15,
+        items: [
+          { name: 'Project Setup & Management', pricing: 'hours', hours: 10 },
+          { name: 'Website Build', pricing: 'hours', hours: 90, timeline: 'Weeks 2–6' },
+          { name: 'Product Photography', pricing: 'fixed', amount: 400, optional: true },
+          { name: 'Reporting & Strategy', pricing: 'fixed', amount: 250, billing: 'monthly' }
+        ],
+        schedule: [{ label: 'Deposit', percent: 30, when: 'signing' }, { label: 'Midpoint', percent: 30, when: 'date', date: '2020-01-01' }, { label: 'Launch', percent: 40, when: 'milestone' }] });
+      j = JSON.parse(r.body);
+      assert.strictEqual(r.status, 200, r.body);
+      const qt = j.item;
+      assert.ok(/^AD-LTC-\d{4}-01$/.test(qt.number), qt.number); assert.strictEqual(qt.status, 'draft'); assert.strictEqual(qt.prepared_by, 'Nicholas P. Stevens');
+      r = await Q('GET', '/quotes/' + qt.id); j = JSON.parse(r.body);
+      // 100 h × $50 = $5,000 standard; × $30 = $3,000; 15% startup = $450 off → $2,550; 85 h after discount
+      assert.strictEqual(j.totals.standard, 500000); assert.strictEqual(j.totals.subtotal, 300000); assert.strictEqual(j.totals.rate_discount, 200000);
+      assert.strictEqual(j.totals.startup_discount, 45000); assert.strictEqual(j.totals.total, 255000); assert.strictEqual(j.totals.hours_after, 85);
+      assert.strictEqual(j.totals.monthly, 25000);
+      assert.strictEqual(j.totals_all.total, 255000 + 34000); // the $400 add-on, less 15%
+      r = await Q('PATCH', '/quotes/' + qt.id, { schedule: [{ label: 'Deposit', percent: 50, when: 'signing' }, { label: 'Rest', percent: 40, when: 'milestone' }] });
+      assert.strictEqual(r.status, 400); assert.ok(/90%/.test(JSON.parse(r.body).error));
+      ok('quotes: numbering, rate discount, startup discount, add-ons and monthly lines add up; schedules must total 100%');
+
+      r = await request(port, 'GET', '/api/quote?t=' + 'x'.repeat(32));
+      assert.strictEqual(r.status, 404);
+      notes.length = 0;
+      r = await Q('POST', '/quotes/' + qt.id + '/send', {}); j = JSON.parse(r.body);
+      assert.strictEqual(r.status, 200, r.body); assert.strictEqual(j.emailed, true);
+      const token = j.item.token; assert.ok(/^[A-Za-z0-9_-]{32}$/.test(token));
+      assert.strictEqual(j.url, 'https://aetheradigital.com/quote/?t=' + token);
+      assert.strictEqual(notes[0].get('kind'), 'quote_email'); assert.strictEqual(notes[0].get('to'), 'lee@libertytool.com'); assert.strictEqual(notes[0].get('button'), 'Review & Sign');
+      r = await Q('GET', '/clients/' + lcid); assert.strictEqual(JSON.parse(r.body).item.status, 'proposal');
+      r = await request(port, 'GET', '/api/quote?t=' + token); j = JSON.parse(r.body);
+      assert.strictEqual(r.status, 200); assert.strictEqual(j.quote.state, 'viewed'); assert.strictEqual(j.quote.terms.version, 1);
+      assert.ok(!r.body.includes(qt.id) && !r.body.includes(lcid) && !r.body.includes('"token"'), 'no internal ids or token leak');
+      ok('quotes: sending emails a private link, moves the client to Proposal, and the first open marks it viewed');
+
+      // Terms change between viewing and signing → asked to reload
+      r = await Q('POST', '/terms', { body: j.quote.terms.body + '\n\n11. Governing law. Michigan.', note: 'Add governing law' });
+      assert.strictEqual(JSON.parse(r.body).current.version, 2);
+      const png = 'data:image/png;base64,' + Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(400, 1)]).toString('base64');
+      const sign = { t: token, name: 'Lee Park', title: 'Owner', email: 'lee@libertytool.com', signature: png, agree_terms: true, agree_esign: true, terms_version: 1, selected: [qt.items[2].id], total_seen: 289000, monthly_seen: 25000 };
+      r = await request(port, 'POST', '/api/quote/accept', sign);
+      assert.strictEqual(r.status, 409); assert.ok(JSON.parse(r.body).reload);
+      r = await request(port, 'POST', '/api/quote/accept', Object.assign({}, sign, { terms_version: 2, total_seen: 255000 }));
+      assert.strictEqual(r.status, 409, 'totals must match what the client saw');
+      r = await request(port, 'POST', '/api/quote/accept', Object.assign({}, sign, { terms_version: 2, signature: 'data:image/png;base64,AAAA' }));
+      assert.strictEqual(r.status, 400); assert.strictEqual(JSON.parse(r.body).field, 'signature');
+      r = await request(port, 'POST', '/api/quote/accept', Object.assign({}, sign, { terms_version: 2, agree_esign: false }));
+      assert.strictEqual(r.status, 400);
+      ok('quotes: signing is refused if the terms or price changed, without a real drawn signature, or without e-sign consent');
+
+      calls.length = 0; notes.length = 0;
+      r = await request(port, 'POST', '/api/quote/accept', Object.assign({}, sign, { terms_version: 2 }), { 'User-Agent': 'TestBrowser/1.0', 'X-Forwarded-For': '203.0.113.9' });
+      j = JSON.parse(r.body);
+      assert.strictEqual(r.status, 200, r.body);
+      assert.strictEqual(j.quote.state, 'accepted'); assert.strictEqual(j.quote.acceptance.ip, '203.0.113.9'); assert.ok(/^[0-9a-f]{64}$/.test(j.quote.acceptance.fingerprint));
+      // deposit (30% of $2,890) and the past-dated midpoint are invoiced now; launch waits for its milestone
+      const items = calls.filter((x) => x.path === '/v1/invoiceitems').map((x) => x.body.get('unit_amount_decimal'));
+      assert.deepStrictEqual(items, ['86700', '86700']);
+      assert.deepStrictEqual(j.quote.invoices.map((b) => b.status), ['invoiced', 'invoiced', 'milestone']);
+      assert.strictEqual(j.quote.invoices[2].amount, 289000 - 86700 - 86700);
+      const inv = calls.filter((x) => x.method === 'POST' && x.path === '/v1/invoices')[0];
+      assert.strictEqual(inv.body.get('metadata[quote_number]'), qt.number); assert.strictEqual(inv.body.get('collection_method'), 'send_invoice');
+      // monthly line → one product and a subscription schedule billed by invoice
+      const sch = calls.find((x) => x.path === '/v1/subscription_schedules');
+      assert.strictEqual(sch.body.get('phases[0][items][0][price_data][unit_amount]'), '25000');
+      assert.strictEqual(sch.body.get('phases[0][items][0][price_data][recurring][interval]'), 'month');
+      assert.strictEqual(sch.body.get('default_settings[collection_method]'), 'send_invoice'); assert.strictEqual(sch.body.get('start_date'), 'now');
+      assert.strictEqual(j.quote.monthly_billing.status, 'active');
+      await new Promise((res) => setTimeout(res, 300));
+      const signed = notes.find((n) => n.get('kind') === 'quote_email');
+      assert.ok(signed && /Signed:/.test(signed.get('subject')) && signed.get('cc') === 'hello@aetheradigital.com');
+      assert.ok(signed.get('record_html').includes('Lee Park') && signed.get('record_html').includes('203.0.113.9') && signed.get('record_html').includes('Governing law'));
+      assert.strictEqual(notes.filter((n) => n.get('kind') === 'invoice_email').length, 2);
+      r = await request(port, 'GET', '/api/admin/desk/clients/' + lcid + '/full', null, A); j = JSON.parse(r.body);
+      assert.ok(j.files.some((f) => f.name === qt.number + ' signed.pdf' && f.category === 'contract'), 'signed PDF filed with the client');
+      r = await Q('GET', '/clients/' + lcid); j = JSON.parse(r.body);
+      assert.strictEqual(j.item.status, 'active'); assert.strictEqual(j.item.monthly_value, 250);
+      ok('quotes: signing records who/when/where, invoices the deposit, starts monthly billing, emails and files a signed PDF');
+
+      r = await request(port, 'POST', '/api/quote/accept', Object.assign({}, sign, { terms_version: 2 }));
+      assert.strictEqual(r.status, 409);
+      r = await Q('PATCH', '/quotes/' + qt.id, { title: 'Changed' }); assert.strictEqual(r.status, 409);
+      r = await Q('DELETE', '/quotes/' + qt.id); assert.strictEqual(r.status, 409);
+      r = await Q('DELETE', '/clients/' + lcid); assert.strictEqual(r.status, 409);
+      calls.length = 0;
+      r = await Q('POST', '/quotes/' + qt.id + '/bill/2', {}); j = JSON.parse(r.body);
+      assert.strictEqual(r.status, 200, r.body); assert.strictEqual(j.item.billing[2].status, 'invoiced');
+      assert.strictEqual(calls.find((x) => x.path === '/v1/invoiceitems').body.get('unit_amount_decimal'), '115600');
+      r = await Q('POST', '/quotes/' + qt.id + '/bill/2', {}); assert.strictEqual(r.status, 409);
+      r = await request(port, 'GET', '/api/quote?t=' + token); j = JSON.parse(r.body);
+      assert.strictEqual(j.quote.terms.version, 2, 'signed quote keeps the terms version it was signed under');
+      r = await Q('POST', '/quotes/' + qt.id + '/duplicate', {}); j = JSON.parse(r.body);
+      assert.ok(/-02$/.test(j.item.number)); assert.strictEqual(j.item.status, 'draft'); assert.strictEqual(j.item.items.length, 4); assert.ok(!j.item.token && !j.item.acceptance);
+      ok('quotes: signed quotes are locked and kept; milestone payments bill once; duplicating starts a fresh draft');
+
+      // decline + expiry
+      r = await Q('POST', '/quotes', { client_id: lcid, title: 'Ads', valid_until: '2020-01-01', items: [{ name: 'Ads setup', pricing: 'fixed', amount: 500 }] });
+      const old = JSON.parse(r.body).item;
+      r = await Q('POST', '/quotes/' + old.id + '/send', {}); assert.strictEqual(r.status, 400);
+      r = await Q('PATCH', '/quotes/' + old.id, { valid_until: '2099-01-01' });
+      r = await Q('POST', '/quotes/' + old.id + '/send', { email: false }); j = JSON.parse(r.body);
+      assert.strictEqual(j.emailed, false);
+      r = await request(port, 'POST', '/api/quote/decline', { t: j.item.token, reason: 'Budget is tight this quarter' });
+      assert.strictEqual(JSON.parse(r.body).quote.state, 'declined');
+      r = await Q('GET', '/quotes'); j = JSON.parse(r.body);
+      assert.ok(j.items.some((x) => x.id === old.id && x.state === 'declined') && j.items.some((x) => x.id === qt.id && x.state === 'accepted'));
+      ok('quotes: expired quotes can’t be sent, link-only sending works, and clients can decline');
+    }
+
     // ---------- webhook ----------
     const sign = (payload, t, secret) => {
       t = t || Math.floor(Date.now() / 1000);
@@ -566,6 +690,14 @@ function request(port, method, p, body, headers) {
     assert.strictEqual(r.status, 400);
     assert.strictEqual(notes.length, 1);
     ok('webhook: rejects forged, wrong-secret, stale and unsigned events');
+
+    notes.length = 0;
+    r = await hook({ id: 'evt_q1', type: 'invoice.finalized', livemode: false, data: { object: Object.assign(INV(), { collection_method: 'send_invoice', amount_due: 25000, parent: { subscription_details: { metadata: { quote_id: 'quo_abc123456', plan: 'quote_monthly' } } } }) } });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(notes.length, 1); assert.strictEqual(notes[0].get('kind'), 'invoice_email');
+    r = await hook({ id: 'evt_q2', type: 'invoice.finalized', livemode: false, data: { object: Object.assign(INV(), { collection_method: 'send_invoice', amount_due: 25000 }) } });
+    assert.strictEqual(notes.length, 1, 'only monthly invoices from signed quotes are emailed this way');
+    ok('webhook: monthly invoices from signed quotes are emailed with the Aethera invoice email');
 
     r = await hook({ id: 'evt_6', type: 'invoice.paid', livemode: false, data: { object: { billing_reason: 'subscription_create', amount_paid: 225000, currency: 'usd', number: 'AETH-0008', customer_email: 'jo@acme.co', metadata: {}, parent: { subscription_details: { metadata: { plan: 'startup_partnership' } } } } } });
     n = notes.pop(); assert.strictEqual(n.get('label'), 'Partnership started (first payment)'); assert.strictEqual(n.get('plan'), 'startup_partnership');

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quote — Aethera Digital</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#000000">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,200;0,300;0,400;0,600;1,300&amp;family=Nunito+Sans:wght@400;600;700&amp;display=swap">
+<link rel="stylesheet" href="/assets/pay.css?v=4">
+<link rel="stylesheet" href="/assets/quote.css?v=1">
+</head>
+<body>
+<div class="testbar" id="testbar" hidden>Test mode · no real charges</div>
+<header class="topbar"><a class="logo" href="/" aria-label="Aethera Digital home"><img src="/assets/icon.png" alt="" width="34" height="34"></a><a class="back" href="mailto:hello@aetheradigital.com">Questions? hello@aetheradigital.com</a></header>
+<main class="stage">
+<div class="orb" style="background: #C8B6FF; left: -6%; top: -8%" aria-hidden="true"></div>
+<div class="orb" style="background: #FFC4A8; right: -4%; top: 30%" aria-hidden="true"></div>
+<div class="inner">
+
+<section class="card center" id="loading" aria-live="polite">
+<p class="eyebrow">Quote</p>
+<h2 style="font-size: 36px; margin-top: 14px">Loading your quote…</h2>
+<div class="dots" style="margin-top: 24px" aria-hidden="true"><span></span><span></span><span></span></div>
+</section>
+
+<section class="card center state" id="missing" hidden>
+<p class="eyebrow">Quote</p>
+<h2 style="margin-top: 14px">We couldn’t find <em>that quote.</em></h2>
+<p id="missing-msg">The link may be incomplete, or the quote was withdrawn. Try the button in your email again, or reply to it and we’ll help.</p>
+<div style="margin-top: 28px"><a class="pill ghost" href="mailto:hello@aetheradigital.com">Email Us</a></div>
+</section>
+
+<div class="qgrid" id="view" hidden>
+<article class="card doc" id="doc" aria-labelledby="q-title"></article>
+<aside class="side">
+<section class="card signc" id="sign" hidden aria-labelledby="sign-h">
+<h2 id="sign-h">Accept &amp; <em>Sign</em></h2>
+<dl class="due" id="due"></dl>
+<form id="sign-form" novalidate>
+<div class="fld"><label for="s-name">Full Name</label><input id="s-name" name="name" autocomplete="name" required></div>
+<div class="fld"><label for="s-title">Title (Optional)</label><input id="s-title" name="title" autocomplete="organization-title" placeholder="Owner"></div>
+<div class="fld"><label for="s-email">Email</label><input id="s-email" name="email" type="email" autocomplete="email" required></div>
+<div class="fld">
+<label id="pad-label">Signature</label>
+<div class="pad" id="pad-wrap"><canvas id="pad" aria-labelledby="pad-label" role="img"></canvas><span class="padhint" id="pad-hint">Sign here with your mouse or finger</span><button type="button" class="clear" id="pad-clear">Clear</button></div>
+</div>
+<label class="agree"><input type="checkbox" id="agree-terms"> <span>I’ve read and agree to the quote above and the <a href="#terms">Terms of Service</a> (<span id="terms-v"></span>).</span></label>
+<label class="agree"><input type="checkbox" id="agree-esign"> <span>I agree to sign electronically, and that my electronic signature is as binding as a handwritten one.</span></label>
+<p class="err" id="sign-err" role="alert" hidden></p>
+<button class="pill block" type="submit" id="sign-btn">Sign &amp; Accept Quote</button>
+</form>
+<p class="secure">Your signature, the time and your IP address are recorded with this quote. You’ll get a signed copy by email.</p>
+<button type="button" class="linkish" id="decline">Decline this quote</button>
+</section>
+
+<section class="card state" id="closed" hidden>
+<div class="icon" id="closed-icon"></div>
+<h2 id="closed-h"></h2>
+<p id="closed-p"></p>
+<div class="acts" id="closed-acts"></div>
+</section>
+</aside>
+</div>
+
+</div>
+</main>
+<script src="/assets/quote.js?v=1"></script>
+</body>
+</html>

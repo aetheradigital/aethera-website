@@ -65,6 +65,31 @@ Add `aetheradigital.com`, `www.aetheradigital.com` and `admin.aetheradigital.com
 3. Clients who lost the email can find the invoice on `/pay` with the invoice number and billing email.
 4. They pay by ACH or card in the branded Payment Element. Stripe marks the invoice paid and the webhook records it.
 
+## Quotes and e-signatures
+
+Desk → **Quotes**. Build a quote from the **Service Catalog** (or type lines in): hourly phases are priced at the client's rate
+(the $50/hr standard rate shown struck through), a startup discount takes a % off the one-time work, optional lines become add-ons
+the client can tick, and monthly lines are billed every month.
+
+1. **Send to Client** emails a private link (`/quote/?t=…`) through the Apps Script, or gives you the link to send yourself.
+   The client's status moves to Proposal; the first time they open it, the quote shows as Viewed.
+2. The client reviews it, picks add-ons, reads the **Terms of Service**, draws a signature, and agrees to sign electronically.
+   The server re-checks the price and terms version before accepting.
+3. On signing the Desk records the signature, name, email, time, IP address, browser, the terms version and a SHA-256 fingerprint
+   of exactly what was signed. Signed quotes can't be edited or deleted (duplicate them to make a new version).
+4. Billing follows the quote's payment schedule: **On signing** payments (and dated ones already past) are invoiced and emailed
+   straight away, **On a date** payments go out that morning (checked hourly), **At a milestone** payments wait for **Bill Now**.
+   Monthly lines start a Stripe subscription billed by invoice from the monthly start date (or the day they sign).
+5. A signed copy is emailed to the client (copying the business inbox) as a PDF made by the Apps Script, and the PDF is saved
+   to the client's Files (Contract).
+
+Terms of Service are versioned under Quotes → Terms of Service. Saving creates a new version; signed quotes keep theirs.
+The starting text is a template. Have an attorney review it.
+
+Apps Script: quote emails use the `quote_email` handler in `forms/apps-script.gs`. Paste the updated script and deploy a
+**new version** of the web app, or quote emails will fail. For monthly invoices from quotes to use the Aethera email instead of
+Stripe's, add `invoice.finalized` to the webhook's events.
+
 ## Environment variables (Render)
 
 | Key | Notes |
@@ -78,6 +103,7 @@ Add `aetheradigital.com`, `www.aetheradigital.com` and `admin.aetheradigital.com
 | `ANTHROPIC_REPORT_MODEL` | Optional model for report commentary (defaults to `ANTHROPIC_MODEL`). |
 | `DESK_TIMEZONE` | Optional, default `America/New_York`: when a new month starts for report drafts and task finish dates. |
 | `REPORT_DRAFTS` | `off` stops the automatic monthly drafts. |
+| `QUOTE_BILLING` | `off` stops the hourly check that invoices dated quote payments. |
 | `ADMIN_PASSWORD` | Password for the admin site. Admin is off until this is set. Use a long passphrase. |
 | `ADMIN_HOST` | Optional, default `admin.aetheradigital.com`. On that host `/` is the admin dashboard; on `aetheradigital.com` and `www.` the `/admin` path redirects there and the admin API is disabled. The onrender.com address keeps `/admin` as a fallback. |
 | `PRICE_PARTNERSHIP`, `PORTAL_URL` | Optional overrides; leave unset. The server picks live or sandbox defaults from `STRIPE_SECRET_KEY`: live keys use the five Startup Package prices ($200 + $600 + $450 + $750 + $250) and the live billing portal. `PRICE_PARTNERSHIP` takes comma-separated price IDs. |
@@ -91,7 +117,7 @@ Add `aetheradigital.com`, `www.aetheradigital.com` and `admin.aetheradigital.com
 
 Endpoint: `https://<site>/api/stripe/webhook`. Events:
 `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`,
-`invoice.paid`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`.
+`invoice.paid`, `invoice.payment_failed`, `invoice.finalized`, `customer.subscription.updated`, `customer.subscription.deleted`.
 Bad or stale signatures get 400. If the Apps Script can't be reached the server returns 500 so Stripe retries.
 
 Invoices and the partnership accept card and US bank account (ACH), set in code (`PAYMENT_METHOD_TYPES`).
