@@ -977,6 +977,7 @@ async function quoteAccept(req, res) {
       total: t.total, monthly: t.monthly };
     // Record the signature first, so it's kept even if billing below has trouble.
     let quote = await desk.update('quote', q.id, { status: 'accepted', acceptance: acceptance, events: withEvent(q, 'accepted', { ip: acceptance.ip, by: name }) });
+    await audit(req, { client_id: q.client_id, actor_type: 'client', actor: name, category: 'quote', event: 'Signed quote', detail: (q.number || '') + ' · ' + (q.title || '') + ' · signed by ' + name });
     const client = await desk.get('client', q.client_id);
     const changes = {};
     if (client && ['lead', 'prospect', 'proposal'].indexOf(client.status) >= 0) changes.status = 'active';
@@ -1002,6 +1003,7 @@ async function quoteDecline(req, res) {
   if (q.status === 'accepted' || q.status === 'declined') return json(res, 409, { error: 'This quote has already been ' + q.status + '.' });
   const declined = { at: new Date().toISOString(), reason: clip(body.reason, 1000), ip: ipOf(req) };
   const quote = await desk.update('quote', q.id, { status: 'declined', declined: declined, events: withEvent(q, 'declined', { ip: declined.ip }) });
+  await audit(req, { client_id: q.client_id, actor_type: 'client', category: 'quote', event: 'Declined quote', detail: (q.number || '') + ' · ' + (q.title || '') });
   const client = await desk.get('client', q.client_id);
   quoteEmail({ to: 'hello@aetheradigital.com', subject: 'Quote declined: ' + q.number + ' (' + clientName(client) + ')', heading: 'Quote declined',
     intro: clientName(client) + ' declined quote ' + q.number + ' (' + q.title + ').' + (declined.reason ? ' Their note: “' + declined.reason + '”' : ''), url: publicOrigin() + '/quote/?t=' + q.token + '&preview=1', button: 'View Quote' })
@@ -1246,12 +1248,15 @@ async function quotesApi(req, res, p, m, url) {
       }
       const upd = { token: token, status: q.status === 'draft' ? 'sent' : q.status, sent_at: q.sent_at || new Date().toISOString(), events: withEvent(q, 'sent', { to: emailed ? to : null }) };
       const item = await desk.update('quote', q.id, upd);
+      await adminAudit(req, q.client_id, 'quote', q.sent_at ? 'Quote re-sent' : 'Quote sent', (q.number || '') + ' · ' + (q.title || '') + (emailed ? ' · emailed to ' + to : ''));
       if (client && ['lead', 'prospect'].indexOf(client.status) >= 0) await desk.update('client', client.id, { status: 'proposal' });
       return json(res, 200, { item: item, url: link, emailed: emailed, email_error: emailError });
     }
     if (action === 'void') {
       if (q.status === 'accepted') return json(res, 409, { error: 'Signed quotes can’t be withdrawn. Void their invoices from Invoices instead.' });
-      return json(res, 200, { item: await desk.update('quote', q.id, { status: 'void', events: withEvent(q, 'withdrawn') }) });
+      const item = await desk.update('quote', q.id, { status: 'void', events: withEvent(q, 'withdrawn') });
+      if (q.status !== 'draft') await adminAudit(req, q.client_id, 'quote', 'Quote withdrawn', (q.number || '') + ' · ' + (q.title || ''));
+      return json(res, 200, { item: item });
     }
     if (action === 'duplicate') {
       const today = deskLib.localDate();
@@ -1889,9 +1894,9 @@ function activityRow(e, name) {
 
 async function portalData(req, res, s) {
   const c = s.client; const name = clientName(c);
-  const [projects, tasks, approvals, reports, files, activity] = await Promise.all([
+  const [projects, tasks, approvals, reports, files, activity, quotes] = await Promise.all([
     desk.list('project', { client_id: c.id }), desk.list('task', { client_id: c.id }), desk.list('approval', { client_id: c.id }),
-    desk.list('report', { client_id: c.id }), desk.listFiles(c.id), portal.audit({ client_id: c.id, limit: 300 })]);
+    desk.list('report', { client_id: c.id }), desk.listFiles(c.id), portal.audit({ client_id: c.id, limit: 300 }), desk.list('quote', { client_id: c.id })]);
   const shared = files.filter(function (f) { return f.shared; });
   const fileById = {}; shared.forEach(function (f) { fileById[f.id] = f; });
   const sent = reports.filter(function (r) { return r.status === 'sent'; }).sort(function (a, b) { return a.period < b.period ? 1 : -1; });
@@ -1918,9 +1923,22 @@ async function portalData(req, res, s) {
       return { id: a.id, title: a.title, kind: a.kind || 'approval', status: a.status || 'pending', requested: a.requested || '', decided: a.decided || '',
         comment: a.client_comment || '', file: f ? { id: f.id, name: f.name, size: f.size || 0 } : null };
     }),
+    quotes: quotes.filter(function (q) { return q.token && q.status !== 'draft' && q.status !== 'void'; })
+      .sort(function (a, b) { return (b.sent_at || b.created_at) < (a.sent_at || a.created_at) ? -1 : 1; }).map(portalQuote),
     health: latestHealth ? { score: latestHealth.metrics.health_score, period: latestHealth.period, change: prevHealth ? latestHealth.metrics.health_score - prevHealth.metrics.health_score : null } : null,
     activity: activity.map(function (e) { return activityRow(e, name); })
   });
+}
+
+// Quotes the client has been sent (drafts and withdrawn quotes stay hidden). Opening one goes through /api/portal/quotes/:id,
+// which logs it and forwards to the quote's signing page.
+function portalQuote(q) {
+  const t = quotesLib.totals(q, q.acceptance ? q.acceptance.selected : []);
+  const state = quoteState(q);
+  return { id: q.id, number: q.number || '', title: q.title || 'Quote', state: state,
+    total_text: t.total ? money(t.total, 'usd') : '', monthly_text: t.monthly ? money(t.monthly, 'usd') + '/mo' : '',
+    sent_at: q.sent_at || '', valid_until: q.valid_until || '', signed_at: q.acceptance ? q.acceptance.at : '', signed_by: q.acceptance ? q.acceptance.name : '',
+    declined_at: q.declined ? q.declined.at : '' };
 }
 
 // ----- billing: the client's own Stripe invoices, matched by the email on file -----
@@ -2043,8 +2061,17 @@ async function portalApi(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
+  // quotes: log the open, then go to the quote's own review & sign page
+  let mm = p.match(/^\/quotes\/(quo_[A-Za-z0-9_-]+)$/);
+  if (mm && m === 'GET') {
+    const q = await desk.get('quote', mm[1]);
+    if (!q || q.client_id !== s.client.id || !q.token || q.status === 'draft' || q.status === 'void') return json(res, 404, { error: 'Quote not found.' });
+    await clientAudit(req, s, 'quote', q.status === 'accepted' ? 'Opened signed quote' : 'Opened quote', (q.number || '') + ' · ' + (q.title || ''));
+    return send(res, 302, '', { Location: quoteUrl(publicOrigin(), q), 'Cache-Control': 'no-store' });
+  }
+
   // files: download a shared file, upload a new one (shared back to Aethera)
-  let mm = p.match(/^\/files\/(fil_[A-Za-z0-9_-]+)$/);
+  mm = p.match(/^\/files\/(fil_[A-Za-z0-9_-]+)$/);
   if (mm && m === 'GET') {
     const f = await desk.getFileMeta(mm[1]);
     if (!f || f.client_id !== s.client.id || !f.shared) return json(res, 404, { error: 'File not found.' });

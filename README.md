@@ -128,6 +128,8 @@ files you share, approvals, their Stripe invoices (paid natively with the Paymen
   (new uploads have a "Share in the client portal" box; signed quote PDFs are shared automatically), and all approvals.
   Approval **notes** stay internal; the client's reply is saved as their comment. Attach a file to an approval to have them review it.
   Invoices are found by the client's email in Stripe, and an invoice belonging to another Stripe customer can't be opened or paid.
+- **Quotes:** every quote you send (not drafts or withdrawn ones) shows under **Quotes**, with a "Ready to sign" count and an overview card. Opening one
+  is logged and goes to the quote's review & sign page. Sending, re-sending, withdrawing, signing and declining are all in the audit log.
 - **Client actions:** approve or request changes (with a note), mark access requests done, download and upload files,
   pay invoices by card or ACH, save a payment method, download invoice PDFs and receipts.
 - **Audit log:** every sign-in, sign-in link, refused link, new device, report view, download, upload, approval, payment and portal

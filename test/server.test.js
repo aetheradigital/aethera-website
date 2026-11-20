@@ -1008,6 +1008,22 @@ function request(port, method, p, body, headers) {
       assert.strictEqual(r.status, 404, 'an invoice for another Stripe customer cannot be paid from this portal');
       ok('portal billing: lists the client’s Stripe invoices and saved card without secrets; other customers’ invoices are refused');
 
+      // Quotes: drafts stay hidden; once sent they show in the portal and open the signing page.
+      const pq = JSON.parse((await request(port, 'POST', '/api/admin/desk/quotes', { client_id: alpha.id, title: 'Portal quote test', items: [{ name: 'Website build', pricing: 'fixed', amount: 1200 }] }, A)).body).item;
+      r = await request(port, 'GET', '/api/portal/data', null, sa.cookie);
+      assert.strictEqual(JSON.parse(r.body).quotes.length, 0, 'draft quotes are hidden');
+      r = await request(port, 'GET', '/api/portal/quotes/' + pq.id, null, sa.cookie);
+      assert.strictEqual(r.status, 404);
+      r = await request(port, 'POST', '/api/admin/desk/quotes/' + pq.id + '/send', { email: false }, A);
+      assert.strictEqual(r.status, 200);
+      r = await request(port, 'GET', '/api/portal/data', null, sa.cookie);
+      j = JSON.parse(r.body);
+      assert.strictEqual(j.quotes.length, 1); assert.strictEqual(j.quotes[0].state, 'sent'); assert.strictEqual(j.quotes[0].total_text, '$1,200.00');
+      assert.ok(!r.body.includes('/quote/?t='), 'the signing token is not in the data');
+      r = await request(port, 'GET', '/api/portal/quotes/' + pq.id, null, sa.cookie);
+      assert.strictEqual(r.status, 302); assert.ok(/\/quote\/\?t=[A-Za-z0-9_-]{24,}$/.test(r.headers.location));
+      ok('portal quotes: sent quotes appear for the client and open the review & sign page; drafts stay hidden');
+
       // The second client signs in on its own and sees none of the first client's data.
       const sb = await signIn(EMAIL_B);
       r = await request(port, 'GET', '/api/portal/data', null, sb.cookie);
@@ -1016,6 +1032,9 @@ function request(port, method, p, body, headers) {
       assert.ok(!r.body.includes('Alpha') && !r.body.includes('Darker blue'));
       r = await request(port, 'GET', '/api/portal/files/' + fShared.id, null, sb.cookie);
       assert.strictEqual(r.status, 404);
+      r = await request(port, 'GET', '/api/portal/quotes/' + pq.id, null, sb.cookie);
+      assert.strictEqual(r.status, 404);
+      assert.strictEqual(j.quotes.length, 0);
       ok('portal: each client sees only their own account; another client’s files and activity stay hidden');
 
       // A new device is flagged; the Desk audit log shows everything with IPs; CSV export.
@@ -1023,7 +1042,7 @@ function request(port, method, p, body, headers) {
       r = await request(port, 'GET', '/api/admin/desk/audit?client_id=' + alpha.id, null, A);
       j = JSON.parse(r.body);
       const evs = j.items.map((e) => e.event);
-      for (const e of ['Portal access turned on', 'Sign-in link requested', 'Signed in', 'Used sign-in link opened again', 'File shared with you', 'Downloaded file', 'Approved', 'Requested changes', 'Uploaded file', 'Viewed report', 'Sign-in from a new device']) assert.ok(evs.includes(e), 'audit has ' + e);
+      for (const e of ['Portal access turned on', 'Sign-in link requested', 'Signed in', 'Used sign-in link opened again', 'File shared with you', 'Downloaded file', 'Approved', 'Requested changes', 'Uploaded file', 'Viewed report', 'Sign-in from a new device', 'Quote sent', 'Opened quote']) assert.ok(evs.includes(e), 'audit has ' + e);
       assert.strictEqual(j.items.filter((e) => e.event === 'Viewed report').length, 1, 'draft report views are not logged');
       assert.ok(j.items.every((e) => e.client_id === alpha.id));
       assert.ok(j.items.find((e) => e.event === 'Sign-in from a new device').flagged);
