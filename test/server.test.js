@@ -81,6 +81,7 @@ const fakeStripe = http.createServer((req, res) => {
     if (m === 'GET' && p.startsWith('/v1/invoices/in_')) return send(INV());
     if (m === 'GET' && p === '/v1/customers') return send({ data: u.searchParams.get('email') === 'old@client.co' ? [{ id: 'cus_old', name: 'Test customer', metadata: {} }] : [] });
     if (m === 'POST' && p === '/v1/customers/cus_old') return send({ id: 'cus_old', name: new URLSearchParams(body).get('name') });
+    if (m === 'GET' && p === '/v1/customers/cus_old') return send({ id: 'cus_old', invoice_settings: { default_payment_method: { id: 'pm_1', type: 'card', card: { brand: 'visa', last4: '4242', exp_month: 8, exp_year: 2028 } } } });
     if (m === 'POST' && p === '/v1/customers') return send({ id: 'cus_new1' });
     if (m === 'POST' && p === '/v1/subscriptions') return send({ id: 'sub_1', latest_invoice: { confirmation_secret: { client_secret: 'pi_sub_secret_xyz' } } });
     if (m === 'POST' && p === '/v1/invoices') return send(Object.assign(INV(), { status: 'draft', number: null }));
@@ -132,6 +133,18 @@ function request(port, method, p, body, headers) {
     assert.deepStrictEqual(j.paymentMethodTypes, ['card', 'us_bank_account']);
     assert.ok(!r.body.includes('sk_test'));
     ok('config exposes publishable key and payment methods only');
+
+    // ---------- R2 request signing (AWS Signature V4 reference examples) ----------
+    {
+      const r2lib = require('../lib/r2');
+      const awsKey = { accessKeyId: 'AKIAIOSFODNN7EXAMPLE', secret: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', region: 'us-east-1', date: new Date('2013-05-24T00:00:00Z') };
+      const url = r2lib.presign(Object.assign({ host: 'examplebucket.s3.amazonaws.com', path: '/test.txt', expires: 86400 }, awsKey));
+      assert.ok(url.endsWith('X-Amz-Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404'));
+      const hd = r2lib.signHeaders(Object.assign({ method: 'GET', host: 'examplebucket.s3.amazonaws.com', path: '/test.txt', headers: { range: 'bytes=0-9' } }, awsKey));
+      assert.ok(hd.Authorization.endsWith('Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41'));
+      assert.strictEqual(r2lib.create({}).enabled, false);
+    }
+    ok('R2: presigned download links and signed uploads match the AWS SigV4 reference signatures');
 
     // ---------- public invoice ----------
     const id = 'in_test1234567890';
@@ -872,6 +885,186 @@ function request(port, method, p, body, headers) {
     r = await request(port, 'GET', '/nope');
     assert.strictEqual(r.status, 404); assert.ok(r.body.includes('drifted off'));
     ok('serves pay, invoice, complete and admin pages, assets, 404 and blocks path traversal');
+
+    // ---------- client portal ----------
+    {
+      const A = { Cookie: cookie };
+      const EMAIL_A = 'old@client.co'; // the fake Stripe knows this customer (cus_old)
+      const EMAIL_B = 'client-b@example.com';
+      const mk = async (body) => JSON.parse((await request(port, 'POST', '/api/admin/desk/clients', body, A)).body).item;
+      const alpha = await mk({ name: 'Contact A', company: 'Alpha Portal Co', email: EMAIL_A, status: 'active' });
+      const beta = await mk({ name: 'Contact B', company: 'Beta Portal Co', email: EMAIL_B, status: 'active' });
+      const dupe = await mk({ name: 'Contact C', company: 'Gamma Portal Co', email: EMAIL_A.toUpperCase(), status: 'active' });
+      const emails = () => notes.filter((n) => n.get('kind') === 'quote_email' && /sign/i.test(n.get('button') || ''));
+
+      // No access yet: same answer, nothing sent.
+      const n0 = emails().length;
+      r = await request(port, 'POST', '/api/portal/login', { email: EMAIL_A });
+      assert.strictEqual(r.status, 200); assert.strictEqual(emails().length, n0);
+      r = await request(port, 'POST', '/api/portal/login', { email: 'nobody@example.org' });
+      assert.strictEqual(r.status, 200); assert.strictEqual(emails().length, n0);
+      r = await request(port, 'GET', '/api/portal/data');
+      assert.strictEqual(r.status, 401);
+
+      r = await request(port, 'POST', '/api/admin/desk/portal/' + alpha.id + '/access', { enabled: true }, A);
+      assert.strictEqual(r.status, 200); assert.strictEqual(JSON.parse(r.body).enabled, true);
+      r = await request(port, 'POST', '/api/admin/desk/portal/' + dupe.id + '/access', { enabled: true }, A);
+      assert.strictEqual(r.status, 409, 'two clients cannot share a portal login');
+      r = await request(port, 'POST', '/api/admin/desk/portal/' + beta.id + '/access', { enabled: true }, A);
+      assert.strictEqual(r.status, 200);
+      r = await request(port, 'PATCH', '/api/admin/desk/clients/' + alpha.id, { portal_access: false }, A);
+      assert.strictEqual(JSON.parse(r.body).item.portal_access, true, 'portal access only changes from the portal panel');
+      ok('portal: access is off until turned on in the Desk; login never reveals which emails have access; one login per client');
+
+      const signIn = async (email, ua) => {
+        const before = emails().length;
+        const lr = await request(port, 'POST', '/api/portal/login', { email: email.toUpperCase() });
+        assert.strictEqual(lr.status, 200); assert.strictEqual(emails().length, before + 1);
+        const note = emails().pop();
+        assert.strictEqual(note.get('to').toLowerCase(), email);
+        const t = new URL(note.get('url')).searchParams.get('t');
+        assert.ok(/\/client\/\?t=/.test(note.get('url')) && t.length >= 40);
+        const vr = await request(port, 'POST', '/api/portal/verify', { token: t }, ua ? { 'User-Agent': ua } : {});
+        assert.strictEqual(vr.status, 200);
+        const sc = vr.headers['set-cookie'][0];
+        assert.ok(/HttpOnly/.test(sc) && /SameSite=Lax/.test(sc));
+        return { token: t, cookie: { Cookie: sc.split(';')[0] } };
+      };
+      const sa = await signIn(EMAIL_A, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15');
+      r = await request(port, 'POST', '/api/portal/verify', { token: sa.token });
+      assert.strictEqual(r.status, 400, 'links work once');
+      r = await request(port, 'POST', '/api/portal/verify', { token: 'x'.repeat(43) });
+      assert.strictEqual(r.status, 400);
+      r = await request(port, 'GET', '/api/portal/session', null, sa.cookie);
+      assert.deepStrictEqual(JSON.parse(r.body), { signed_in: true, name: 'Alpha Portal Co' });
+      r = await request(port, 'GET', '/api/portal/data', null, { Cookie: 'aethera_client=' + 'y'.repeat(43) });
+      assert.strictEqual(r.status, 401);
+      ok('portal: emailed one-time link signs in with an HttpOnly cookie; reused or forged links and cookies are refused');
+
+      // Content for both clients.
+      const up = async (cid, name, shared) => JSON.parse((await request(port, 'POST', '/api/admin/desk/files?client_id=' + cid + '&category=deliverable&name=' + encodeURIComponent(name) + (shared ? '&shared=1' : ''), 'bytes of ' + name, Object.assign({ 'Content-Type': 'text/plain' }, A))).body).file;
+      const fShared = await up(alpha.id, 'Homepage round 2.pdf', true);
+      const fHidden = await up(alpha.id, 'Access passwords.txt', false);
+      const fOther = await up(beta.id, 'Beta catalog.pdf', true);
+      const appr = JSON.parse((await request(port, 'POST', '/api/admin/desk/approvals', { client_id: alpha.id, title: 'Homepage design round 2', file_id: fShared.id, notes: 'internal only note' }, A)).body).item;
+      const appr2 = JSON.parse((await request(port, 'POST', '/api/admin/desk/approvals', { client_id: alpha.id, title: 'Logo refresh' }, A)).body).item;
+      const apprOther = JSON.parse((await request(port, 'POST', '/api/admin/desk/approvals', { client_id: beta.id, title: 'Beta packaging' }, A)).body).item;
+      const rep1 = JSON.parse((await request(port, 'POST', '/api/admin/desk/reports', { client_id: alpha.id, period: '2026-09' }, A)).body).item;
+      await request(port, 'PATCH', '/api/admin/desk/reports/' + rep1.id, { status: 'sent', metrics: { leads: 35, sessions: 3109 }, summary: 'Good month.' }, A);
+      const rep2 = JSON.parse((await request(port, 'POST', '/api/admin/desk/reports', { client_id: alpha.id, period: '2026-10' }, A)).body).item;
+      await request(port, 'PATCH', '/api/admin/desk/reports/' + rep2.id, { status: 'draft', metrics: { leads: 41 } }, A);
+      const proj = JSON.parse((await request(port, 'POST', '/api/admin/desk/projects', { client_id: alpha.id, name: 'Website refinement', status: 'in_progress' }, A)).body).item;
+      await request(port, 'POST', '/api/admin/desk/tasks', { project_id: proj.id, title: 'Sitemap', done: true }, A);
+      await request(port, 'POST', '/api/admin/desk/projects', { client_id: alpha.id, name: 'General To-Dos' }, A);
+
+      r = await request(port, 'GET', '/api/portal/data', null, sa.cookie);
+      j = JSON.parse(r.body);
+      assert.strictEqual(r.status, 200);
+      assert.strictEqual(j.client.name, 'Alpha Portal Co');
+      assert.deepStrictEqual(j.reports.map((x) => x.period), ['2026-09'], 'only sent reports');
+      assert.deepStrictEqual(j.files.map((x) => x.name), ['Homepage round 2.pdf'], 'only shared files');
+      assert.deepStrictEqual(j.projects.map((x) => x.name), ['Website refinement']);
+      assert.strictEqual(j.projects[0].tasks[0].done, true);
+      assert.strictEqual(j.approvals.length, 2); assert.strictEqual(j.approvals.find((x) => x.id === appr.id).file.id, fShared.id);
+      assert.ok(!r.body.includes('Beta') && !r.body.includes('internal only note') && !r.body.includes(fHidden.id));
+      assert.ok(j.activity.some((e) => e.event === 'Signed in' && e.by === 'Alpha Portal Co'));
+      assert.ok(j.activity.some((e) => e.event === 'File shared with you' && e.by === 'Aethera team'));
+      ok('portal: a client sees only their own sent reports, shared files, projects and approvals (no internal notes or To-Dos)');
+
+      r = await request(port, 'GET', '/api/portal/files/' + fShared.id, null, sa.cookie);
+      assert.strictEqual(r.status, 200); assert.strictEqual(r.body, 'bytes of Homepage round 2.pdf');
+      for (const fid of [fHidden.id, fOther.id]) {
+        r = await request(port, 'GET', '/api/portal/files/' + fid, null, sa.cookie);
+        assert.strictEqual(r.status, 404);
+      }
+      r = await request(port, 'POST', '/api/portal/approvals/' + apprOther.id, { action: 'approve' }, sa.cookie);
+      assert.strictEqual(r.status, 404, 'cannot approve another client’s item');
+      r = await request(port, 'POST', '/api/portal/approvals/' + appr2.id, { action: 'changes' }, sa.cookie);
+      assert.strictEqual(r.status, 400, 'changes need a note');
+      r = await request(port, 'POST', '/api/portal/approvals/' + appr.id, { action: 'approve' }, sa.cookie);
+      assert.strictEqual(r.status, 200); assert.strictEqual(JSON.parse(r.body).approval.status, 'approved');
+      r = await request(port, 'POST', '/api/portal/approvals/' + appr.id, { action: 'approve' }, sa.cookie);
+      assert.strictEqual(r.status, 409);
+      r = await request(port, 'POST', '/api/portal/approvals/' + appr2.id, { action: 'changes', comment: 'Darker blue please' }, sa.cookie);
+      assert.strictEqual(r.status, 200);
+      r = await request(port, 'GET', '/api/admin/desk/approvals/' + appr2.id, null, A);
+      j = JSON.parse(r.body).item; assert.strictEqual(j.status, 'changes'); assert.strictEqual(j.client_comment, 'Darker blue please'); assert.ok(/portal/.test(j.decided_by));
+      r = await request(port, 'POST', '/api/portal/files?name=truck%20photos.zip', 'zipbytes', Object.assign({ 'Content-Type': 'application/zip' }, sa.cookie));
+      assert.strictEqual(r.status, 200);
+      r = await request(port, 'GET', '/api/admin/desk/clients/' + alpha.id + '/full', null, A);
+      const upl = JSON.parse(r.body).files.find((f) => f.name === 'truck photos.zip');
+      assert.ok(upl && upl.shared && upl.uploaded_by === 'client');
+      await request(port, 'POST', '/api/portal/event', { type: 'report_view', id: rep2.id }, sa.cookie);
+      await request(port, 'POST', '/api/portal/event', { type: 'report_view', id: rep1.id }, sa.cookie);
+      r = await request(port, 'POST', '/api/portal/approvals/' + appr2.id, { action: 'approve' }, Object.assign({ Origin: 'https://evil.example' }, sa.cookie));
+      assert.strictEqual(r.status, 403);
+      ok('portal: downloads, approvals, change requests and uploads are scoped to the signed-in client; cross-origin posts refused');
+
+      r = await request(port, 'GET', '/api/portal/billing', null, sa.cookie);
+      j = JSON.parse(r.body);
+      assert.strictEqual(r.status, 200); assert.strictEqual(j.invoices[0].number, 'AETH-0007'); assert.strictEqual(j.method.last4, '4242');
+      assert.ok(!r.body.includes('cus_secret') && !r.body.includes('should_not_leak') && !r.body.includes('pi_123_secret'));
+      r = await request(port, 'POST', '/api/portal/invoices/in_test1234567890/pay', {}, sa.cookie);
+      assert.strictEqual(r.status, 404, 'an invoice for another Stripe customer cannot be paid from this portal');
+      ok('portal billing: lists the client’s Stripe invoices and saved card without secrets; other customers’ invoices are refused');
+
+      // The second client signs in on its own and sees none of the first client's data.
+      const sb = await signIn(EMAIL_B);
+      r = await request(port, 'GET', '/api/portal/data', null, sb.cookie);
+      j = JSON.parse(r.body);
+      assert.deepStrictEqual(j.files.map((x) => x.name), ['Beta catalog.pdf']);
+      assert.ok(!r.body.includes('Alpha') && !r.body.includes('Darker blue'));
+      r = await request(port, 'GET', '/api/portal/files/' + fShared.id, null, sb.cookie);
+      assert.strictEqual(r.status, 404);
+      ok('portal: each client sees only their own account; another client’s files and activity stay hidden');
+
+      // A new device is flagged; the Desk audit log shows everything with IPs; CSV export.
+      await signIn(EMAIL_A, 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1');
+      r = await request(port, 'GET', '/api/admin/desk/audit?client_id=' + alpha.id, null, A);
+      j = JSON.parse(r.body);
+      const evs = j.items.map((e) => e.event);
+      for (const e of ['Portal access turned on', 'Sign-in link requested', 'Signed in', 'Used sign-in link opened again', 'File shared with you', 'Downloaded file', 'Approved', 'Requested changes', 'Uploaded file', 'Viewed report', 'Sign-in from a new device']) assert.ok(evs.includes(e), 'audit has ' + e);
+      assert.strictEqual(j.items.filter((e) => e.event === 'Viewed report').length, 1, 'draft report views are not logged');
+      assert.ok(j.items.every((e) => e.client_id === alpha.id));
+      assert.ok(j.items.find((e) => e.event === 'Sign-in from a new device').flagged);
+      assert.ok(j.items.find((e) => e.event === 'Signed in').ip);
+      r = await request(port, 'GET', '/api/admin/desk/audit?flagged=1', null, A);
+      assert.ok(JSON.parse(r.body).items.every((e) => e.flagged));
+      r = await request(port, 'GET', '/api/admin/desk/audit?format=csv&client_id=' + beta.id, null, A);
+      assert.ok(/text\/csv/.test(r.headers['content-type'])); assert.ok(r.body.includes('Beta Portal Co') && !r.body.includes('Alpha Portal Co'));
+      r = await request(port, 'GET', '/api/admin/desk/audit', null, {});
+      assert.strictEqual(r.status, 401);
+      ok('audit log: every portal action recorded with IP and device, new devices flagged, filters and CSV export (admin only)');
+
+      // Sign-out and turning access off end sessions.
+      r = await request(port, 'POST', '/api/portal/logout', {}, sb.cookie);
+      assert.strictEqual(r.status, 200);
+      r = await request(port, 'GET', '/api/portal/data', null, sb.cookie);
+      assert.strictEqual(r.status, 401);
+      r = await request(port, 'POST', '/api/admin/desk/portal/' + alpha.id + '/access', { enabled: false }, A);
+      assert.strictEqual(JSON.parse(r.body).sessions.length, 0);
+      r = await request(port, 'GET', '/api/portal/data', null, sa.cookie);
+      assert.strictEqual(r.status, 401);
+      ok('portal: sign-out ends the session; turning access off signs the client out everywhere');
+
+      // Hosts.
+      const CL = { Host: 'client.aetheradigital.com' };
+      r = await request(port, 'GET', '/', null, CL);
+      assert.strictEqual(r.status, 200); assert.ok(r.body.includes('portal.js') && r.body.includes('noindex'));
+      r = await request(port, 'GET', '/login?t=abc', null, CL);
+      assert.strictEqual(r.status, 200);
+      r = await request(port, 'GET', '/api/portal/session', null, CL);
+      assert.strictEqual(JSON.parse(r.body).signed_in, false);
+      r = await request(port, 'GET', '/api/admin/me', null, CL);
+      assert.strictEqual(r.status, 302);
+      r = await request(port, 'GET', '/pay/', null, CL);
+      assert.strictEqual(r.status, 302); assert.strictEqual(r.headers.location, 'https://aetheradigital.com/pay/');
+      r = await request(port, 'GET', '/client/', null, { Host: 'aetheradigital.com' });
+      assert.strictEqual(r.status, 301); assert.strictEqual(r.headers.location, 'https://client.aetheradigital.com/');
+      r = await request(port, 'GET', '/api/portal/session', null, { Host: 'aetheradigital.com' });
+      assert.strictEqual(r.status, 404);
+      ok('client.aetheradigital.com serves the portal and its API only; the public domain redirects /client there');
+    }
 
     // ---------- live keys switch prices and portal ----------
     const livePort = port + 1000;

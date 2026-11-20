@@ -24,7 +24,7 @@ Aethera Digital's website plus a native, embedded Stripe checkout.
 
 ## Domains
 
-Add `aetheradigital.com`, `www.aetheradigital.com` and `admin.aetheradigital.com` as custom domains on the aethera-site service in Render, then create the DNS records Render lists. The admin session cookie is scoped to the admin host only.
+Add `aetheradigital.com`, `www.aetheradigital.com`, `admin.aetheradigital.com` and `client.aetheradigital.com` as custom domains on the aethera-site service in Render, then create the DNS records Render lists. The admin and portal session cookies are each scoped to their own host.
 
 ## Suggested to-dos from email and meetings
 
@@ -113,6 +113,31 @@ Apps Script: quote emails use the `quote_email` handler in `forms/apps-script.gs
 **new version** of the web app, or quote emails will fail. For monthly invoices from quotes to use the Aethera email instead of
 Stripe's, add `invoice.finalized` to the webhook's events.
 
+## Client portal (client.aetheradigital.com)
+
+Each client gets a private portal with their **sent** monthly reports (charts, wins, next actions), projects and checklists,
+files you share, approvals, their Stripe invoices (paid natively with the Payment Element, "Powered by Stripe") and their own activity log.
+
+- **Turning it on:** a client's **Overview** tab in the Desk › **Client Portal** › tick "Let this client sign in", then **Send Portal Invite**.
+  The client's email in the Desk is their login (one login per client; two clients can't share an email). Turning access off signs them out everywhere.
+- **Signing in:** the client enters their email and gets a one-time link (15 minutes, single use) through the Apps Script email
+  (same `quote_email` sender as quotes, so no Apps Script changes are needed). The link opens a "Continue to your portal" page,
+  so email scanners that open links can't use it up. Sessions last 30 days in an HttpOnly cookie on the portal host only.
+  The sign-in form gives the same answer whether or not an email has access.
+- **What they see:** reports marked **Sent**, every project except "General To-Dos", files with **Client Portal › Shared** ticked
+  (new uploads have a "Share in the client portal" box; signed quote PDFs are shared automatically), and all approvals.
+  Approval **notes** stay internal; the client's reply is saved as their comment. Attach a file to an approval to have them review it.
+  Invoices are found by the client's email in Stripe, and an invoice belonging to another Stripe customer can't be opened or paid.
+- **Client actions:** approve or request changes (with a note), mark access requests done, download and upload files,
+  pay invoices by card or ACH, save a payment method, download invoice PDFs and receipts.
+- **Audit log:** every sign-in, sign-in link, refused link, new device, report view, download, upload, approval, payment and portal
+  change made in the Desk is written to `portal_audit` with time, IP and device. It's append-only (Postgres rules ignore UPDATE and
+  DELETE) and kept when a client is deleted. Clients see their own entries under **Activity**; the Desk's **Client Portal** page shows
+  everything with filters (client, type, needs review, search) and **Export CSV**. Sign-ins from a new device, reused or expired links
+  and too many link requests are marked **Review**.
+- **Files** go to Cloudflare R2 when the four `R2_*` variables are set (up to 50 MB each; otherwise Postgres, 15 MB). Downloads are
+  10-minute signed links. Files uploaded before R2 was set up stay in Postgres and keep working.
+
 ## Environment variables (Render)
 
 | Key | Notes |
@@ -128,6 +153,8 @@ Stripe's, add `invoice.finalized` to the webhook's events.
 | `REPORT_DRAFTS` | `off` stops the automatic monthly drafts. |
 | `QUOTE_BILLING` | `off` stops the hourly check that invoices dated quote payments. |
 | `ADMIN_PASSWORD` | Password for the admin site. Admin is off until this is set. Use a long passphrase. |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Cloudflare R2 bucket for Desk and portal files (token with Object Read & Write on that bucket only). All four turn R2 on. |
+| `CLIENT_HOST` | Optional, default `client.aetheradigital.com`. On that host `/` is the client portal; elsewhere (onrender.com, localhost) it's at `/client/`. |
 | `ADMIN_HOST` | Optional, default `admin.aetheradigital.com`. On that host `/` is the admin dashboard; on `aetheradigital.com` and `www.` the `/admin` path redirects there and the admin API is disabled. The onrender.com address keeps `/admin` as a fallback. |
 | `PRICE_PARTNERSHIP`, `PORTAL_URL` | Optional overrides; leave unset. The server picks live or sandbox defaults from `STRIPE_SECRET_KEY`: live keys use the five Startup Package prices ($200 + $600 + $450 + $750 + $250) and the live billing portal. `PRICE_PARTNERSHIP` takes comma-separated price IDs. |
 | `STRIPE_AUTOMATIC_TAX` | `on` to enable Stripe Tax on new invoices and subscriptions (finish Tax setup and add registrations first). |

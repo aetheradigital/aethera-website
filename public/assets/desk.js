@@ -199,20 +199,25 @@
         });
       } });
   }
-  function editApproval(a, clientId, then) {
+  function editApproval(a, clientId, then, files) {
+    var fields = [
+      { name: 'title', label: 'What needs a decision?', required: true, placeholder: 'e.g. Homepage design v2' },
+      { name: 'kind', label: 'Type', type: 'select', options: META.approval_kind, half: true }, { name: 'status', label: 'Status', type: 'select', options: META.approval_status, half: true },
+      { name: 'decided_by', label: 'Decided By', half: true }, { name: 'decided', label: 'Decision Date', type: 'date', half: true },
+      { name: 'notes', label: 'Internal Notes (not shown to the client)', type: 'textarea', rows: 3 }
+    ];
+    // In the client portal the client can approve or ask for changes; attach a file for them to review (it's shared when saved).
+    if (files && files.length) fields.splice(1, 0, { name: 'file_id', label: 'File to Review (Client Portal)', type: 'select', options: [['', 'None']].concat(files.map(function (f) { return [f.id, f.name]; })) });
     modal({ title: a ? 'Update Item' : 'New Approval or Decision', submit: a ? 'Save' : 'Add',
-      fields: [
-        { name: 'title', label: 'What needs a decision?', required: true, placeholder: 'e.g. Homepage design v2' },
-        { name: 'kind', label: 'Type', type: 'select', options: META.approval_kind, half: true }, { name: 'status', label: 'Status', type: 'select', options: META.approval_status, half: true },
-        { name: 'decided_by', label: 'Decided By', half: true }, { name: 'decided', label: 'Decision Date', type: 'date', half: true },
-        { name: 'notes', label: 'Notes', type: 'textarea', rows: 3 }
-      ],
+      fields: fields,
       values: a || { kind: 'approval', status: 'pending' },
       onSubmit: function (d) {
         if (!d.title) throw new Error('Describe what needs a decision.');
         if (d.status !== 'pending' && !d.decided) d.decided = today();
-        if (a) return desk('PATCH', '/approvals/' + a.id, d).then(function (r) { toast('Saved'); then(r.item); });
-        d.client_id = clientId; return desk('POST', '/approvals', d).then(function (r) { toast('Added'); then(r.item); });
+        var shareFile = d.file_id && files ? files.filter(function (f) { return f.id === d.file_id && !f.shared; })[0] : null;
+        var after = function (r) { return shareFile ? desk('PATCH', '/files/' + shareFile.id, { shared: true }).then(function () { return r; }) : r; };
+        if (a) return desk('PATCH', '/approvals/' + a.id, d).then(after).then(function (r) { toast('Saved'); then(r.item); });
+        d.client_id = clientId; return desk('POST', '/approvals', d).then(after).then(function (r) { toast('Added'); then(r.item); });
       } });
   }
 
@@ -258,6 +263,7 @@
     if (p[0] === 'health' && p[1]) return assetView(p[1], p[2] || 'checks');
     if (p[0] === 'health') return healthView(q.client || '');
     if (p[0] === 'quotes' && window.DeskQuotes) return window.DeskQuotes.route(p, q);
+    if (p[0] === 'portal' && window.DeskPortal) return window.DeskPortal.route(p, q);
     overview();
   }
   window.addEventListener('hashchange', route);
@@ -465,6 +471,7 @@
           h('h2', { style: 'margin-top:18px' }, 'Notes'),
           c.notes ? h('p', { class: 'notes', text: c.notes }) : emptyLine('No notes yet.'))),
       connectionsPanel(c, reload),
+      window.DeskPortal ? window.DeskPortal.clientPanel(c) : null,
       h('div', { class: 'no-print', style: 'margin-top:24px' }, h('button', { class: 'pill small ghost', type: 'button', text: 'Delete Client', onclick: function () {
         if (!confirmDelete((c.company || c.name) + ' and all of its projects, files, approvals and reports (Stripe invoices are not affected)')) return;
         desk('DELETE', '/clients/' + c.id).then(function () { toast('Client deleted'); location.hash = '#/clients'; }).catch(function (x) { toast(x.message, true); });
@@ -484,54 +491,59 @@
   }
   function clientFiles(c, d, reload) {
     var cat = h('select', { class: 'search', style: 'max-width:200px;border-radius:12px', 'aria-label': 'File category' }, META.file_category.map(function (s) { return h('option', { value: s, text: s === 'access' ? 'Access' : lab(s) }); }));
+    var limitMb = META.file_limit_mb || 15;
+    var shareBox = h('input', { type: 'checkbox', id: 'file-share' });
     var input = h('input', { type: 'file', id: 'file-in', multiple: true, hidden: true, onchange: function (e) { upload(e.target.files); } });
-    var drop = h('div', { class: 'drop' }, 'Drag files here or ', h('label', { for: 'file-in', text: 'choose files' }), ' (up to 15 MB each)', input);
+    var drop = h('div', { class: 'drop' }, 'Drag files here or ', h('label', { for: 'file-in', text: 'choose files' }), ' (up to ' + limitMb + ' MB each)', input);
     ['dragenter', 'dragover'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('on'); }); });
     ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('on'); }); });
     drop.addEventListener('drop', function (e) { upload(e.dataTransfer.files); });
     function upload(files) {
       var list = Array.prototype.slice.call(files || []); if (!list.length) return;
-      var big = list.filter(function (f) { return f.size > 15 * 1024 * 1024; });
-      if (big.length) { toast(big[0].name + ' is over 15 MB', true); return; }
+      var big = list.filter(function (f) { return f.size > limitMb * 1024 * 1024; });
+      if (big.length) { toast(big[0].name + ' is over ' + limitMb + ' MB', true); return; }
       toast('Uploading ' + list.length + ' file' + (list.length > 1 ? 's' : '') + '…');
       list.reduce(function (p, f) {
         return p.then(function () {
-          return fetch('/api/admin/desk/files?client_id=' + encodeURIComponent(c.id) + '&category=' + encodeURIComponent(cat.value) + '&name=' + encodeURIComponent(f.name), { method: 'POST', body: f, headers: { 'Content-Type': f.type || 'application/octet-stream' }, credentials: 'same-origin' })
+          return fetch('/api/admin/desk/files?client_id=' + encodeURIComponent(c.id) + '&category=' + encodeURIComponent(cat.value) + '&name=' + encodeURIComponent(f.name) + (shareBox.checked ? '&shared=1' : ''), { method: 'POST', body: f, headers: { 'Content-Type': f.type || 'application/octet-stream' }, credentials: 'same-origin' })
             .then(function (r) { if (!r.ok) return r.json().then(function (x) { throw new Error(x.error || 'Upload failed'); }); });
         });
       }, Promise.resolve()).then(function () { toast('Uploaded'); reload(); }).catch(function (x) { toast(x.message, true); });
     }
     var size = function (b) { return b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB'; };
     return h('div', null,
-      h('div', { class: 'panel', style: 'margin-bottom:18px' }, h('div', { class: 'toolbar', style: 'margin-bottom:12px' }, h('span', { class: 'eyebrow', text: 'Upload As' }), cat), drop),
-      d.files.length ? h('div', { class: 'card flush' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', { text: 'File' }), h('th', { text: 'Category' }), h('th', { text: 'Size' }), h('th', { text: 'Added' }), h('th', { class: 'num' }))),
+      h('div', { class: 'panel', style: 'margin-bottom:18px' }, h('div', { class: 'toolbar', style: 'margin-bottom:12px' }, h('span', { class: 'eyebrow', text: 'Upload As' }), cat,
+        window.DeskPortal ? h('label', { style: 'display:inline-flex;gap:8px;align-items:center;cursor:pointer;margin-left:8px' }, shareBox, 'Share in the client portal') : null), drop),
+      d.files.length ? h('div', { class: 'card flush' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', { text: 'File' }), h('th', { text: 'Category' }), window.DeskPortal ? h('th', { text: 'Client Portal' }) : null, h('th', { text: 'Size' }), h('th', { text: 'Added' }), h('th', { class: 'num' }))),
         h('tbody', null, d.files.map(function (f) {
           return h('tr', null, h('td', null, h('a', { href: '/api/admin/desk/files/' + f.id, text: f.name })), h('td', null, h('span', { class: 'tag', text: f.category === 'access' ? 'Access' : lab(f.category) })),
+            window.DeskPortal ? h('td', null, window.DeskPortal.shareToggle(f)) : null,
             h('td', { text: size(f.size) }), h('td', { text: day(f.created_at) }),
             h('td', { class: 'num' }, h('div', { class: 'rowacts' }, h('a', { href: '/api/admin/desk/files/' + f.id, text: 'Download' }), h('button', { class: 'danger', type: 'button', text: 'Delete', onclick: function () {
               if (!confirmDelete(f.name)) return; desk('DELETE', '/files/' + f.id).then(function () { toast('File deleted'); reload(); }).catch(function (x) { toast(x.message, true); });
             } }))));
         })))) : h('div', { class: 'panel' }, emptyLine('No files yet. Upload brand assets, access details, contracts and deliverables here.')));
   }
-  function approvalRow(a, showClient, reload) {
+  function approvalRow(a, showClient, reload, files) {
     var sel = h('select', { class: 'st ' + a.status, 'aria-label': 'Status for ' + a.title, onchange: function (e) {
       var body = { status: e.target.value }; if (e.target.value !== 'pending' && !a.decided) body.decided = today();
       desk('PATCH', '/approvals/' + a.id, body).then(function () { e.target.className = 'st ' + e.target.value; toast('Updated'); if (reload) reload(); }).catch(function (x) { toast(x.message, true); });
     } }, META.approval_status.map(function (s) { return h('option', { value: s, text: lab(s), selected: s === a.status ? 'selected' : null }); }));
     return h('tr', null,
-      h('td', { class: 'who' }, h('b', { text: a.title }), h('small', { text: [showClient ? a.client : null, lab(a.kind), a.notes].filter(Boolean).join(' · ') })),
+      h('td', { class: 'who' }, h('b', { text: a.title }), h('small', { text: [showClient ? a.client : null, lab(a.kind), a.notes].filter(Boolean).join(' · ') }),
+        a.client_comment ? h('small', { style: 'display:block;color:#FFB3D1', text: 'Client: “' + a.client_comment + '”' }) : null),
       h('td', null, sel),
       h('td', { text: a.status === 'pending' ? 'Requested ' + day(a.requested) : (a.decided ? day(a.decided) : '—') + (a.decided_by ? ' · ' + a.decided_by : '') }),
       h('td', { class: 'num' }, h('div', { class: 'rowacts' },
-        h('button', { type: 'button', text: 'Edit', onclick: function () { editApproval(a, a.client_id, function () { if (reload) reload(); }); } }),
+        h('button', { type: 'button', text: 'Edit', onclick: function () { editApproval(a, a.client_id, function () { if (reload) reload(); }, files); } }),
         h('button', { class: 'danger', type: 'button', text: 'Delete', onclick: function () { if (!confirmDelete('“' + a.title + '”')) return; desk('DELETE', '/approvals/' + a.id).then(function () { toast('Deleted'); if (reload) reload(); }); } }))));
   }
   function clientApprovals(c, d, reload) {
     var list = d.approvals.slice().sort(function (a, b) { return (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1) || (b.created_at < a.created_at ? -1 : 1); });
     return h('div', null,
-      h('div', { class: 'toolbar' }, btn('New Approval or Decision', function () { editApproval(null, c.id, reload); })),
+      h('div', { class: 'toolbar' }, btn('New Approval or Decision', function () { editApproval(null, c.id, reload, d.files); })),
       list.length ? h('div', { class: 'card flush' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', { text: 'Item' }), h('th', { text: 'Status' }), h('th', { text: 'Date' }), h('th', { class: 'num' }))),
-        h('tbody', null, list.map(function (a) { return approvalRow(a, false, reload); })))) : h('div', { class: 'panel' }, emptyLine('Track design approvals, key decisions and access requests here.')));
+        h('tbody', null, list.map(function (a) { return approvalRow(a, false, reload, d.files); })))) : h('div', { class: 'panel' }, emptyLine('Track design approvals, key decisions and access requests here.')));
   }
   function clientReports(c, d) {
     return h('div', null,
