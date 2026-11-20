@@ -660,12 +660,12 @@ async function deskApi(req, res, url) {
   if (mm && m === 'GET') {
     const c = await desk.get('client', mm[1]);
     if (!c) return json(res, 404, { error: 'Client not found.' });
-    const [projects, tasks, approvals, reports, files, suggestions] = await Promise.all([
+    const [projects, tasks, approvals, reports, files, suggestions, assets] = await Promise.all([
       desk.list('project', { client_id: c.id }), desk.list('task', { client_id: c.id }), desk.list('approval', { client_id: c.id }),
-      desk.list('report', { client_id: c.id }), desk.listFiles(c.id), desk.list('suggestion', { client_id: c.id })]);
+      desk.list('report', { client_id: c.id }), desk.listFiles(c.id), desk.list('suggestion', { client_id: c.id }), desk.list('asset', { client_id: c.id })]);
     let invoices = []; let invoiceError = null;
     try { invoices = await stripeInvoicesFor(c.email, originOf(req)); } catch (e) { invoiceError = 'Couldn’t load invoices from Stripe.'; }
-    return json(res, 200, { client: c, suggestions: suggestions.filter(function (x) { return x.status === 'new'; }).reverse(), projects: projects, tasks: tasks, approvals: approvals, reports: reports.sort(function (a, b) { return a.period < b.period ? 1 : -1; }), files: files, invoices: invoices, invoice_error: invoiceError });
+    return json(res, 200, { client: c, suggestions: suggestions.filter(function (x) { return x.status === 'new'; }).reverse(), projects: projects, tasks: tasks, approvals: approvals, reports: reports.sort(function (a, b) { return a.period < b.period ? 1 : -1; }), files: files, assets: assets, invoices: invoices, invoice_error: invoiceError });
   }
 
   // apply a checklist template to a project
@@ -724,8 +724,14 @@ async function deskApi(req, res, url) {
   }
   if (mm && m === 'DELETE') { await desk.removeFile(mm[1]); return json(res, 200, { ok: true }); }
 
-  // generic records: /clients, /projects, /tasks, /approvals, /reports (+ /:id)
-  mm = p.match(/^\/(clients|projects|tasks|approvals|reports|suggestions|leads)(?:\/([a-z]{3}_[A-Za-z0-9_-]+))?$/);
+  // Digital Health: fetch a page for a scan (the browser runs the checks), Claude review, fixes to to-dos, import
+  if (p === '/health/fetch' && m === 'POST') return healthFetch(req, res);
+  if (p === '/health/import' && m === 'POST') return healthImport(req, res);
+  mm = p.match(/^\/assets\/(ass_[A-Za-z0-9_-]+)\/(review|fix|client)$/);
+  if (mm && m === 'POST') return mm[2] === 'review' ? healthReview(req, res, mm[1]) : mm[2] === 'fix' ? healthFix(req, res, mm[1]) : healthRelink(req, res, mm[1]);
+
+  // generic records: /clients, /projects, /tasks, /approvals, /reports, /assets (+ /:id)
+  mm = p.match(/^\/(clients|projects|tasks|approvals|reports|suggestions|leads|assets)(?:\/([a-z]{3}_[A-Za-z0-9_-]+))?$/);
   if (!mm) return json(res, 404, { error: 'Not found' });
   const type = deskLib.PLURAL[mm[1]]; const id = mm[2];
   if (!id && m === 'GET') {
@@ -744,6 +750,7 @@ async function deskApi(req, res, url) {
       const bad = reportingLib.normalizeConnections(v.data); if (bad) return json(res, 400, { error: bad });
     }
     else if (type === 'lead') { v.data.status = v.data.status || 'new'; }
+    else if (type === 'asset' && !v.data.client_id) { v.data.status = v.data.status || 'live'; }
     else if (deskLib.SCHEMA[type].parent === 'client') {
       if (!(await desk.get('client', v.data.client_id))) return json(res, 400, { error: 'Client not found.' });
       links.client_id = v.data.client_id;
@@ -756,6 +763,12 @@ async function deskApi(req, res, url) {
     if (type === 'approval') { v.data.status = v.data.status || 'pending'; v.data.kind = v.data.kind || 'approval'; v.data.requested = v.data.requested || new Date().toISOString().slice(0, 10); }
     if (type === 'task' && v.data.done === undefined) v.data.done = false;
     if (type === 'task' && v.data.done && !v.data.done_at) v.data.done_at = deskLib.localDate();
+    if (type === 'asset') {
+      v.data.status = v.data.status || 'live';
+      const item = await desk.create(type, v.data, links);
+      await syncHealthReports(item.client_id);
+      return json(res, 200, { item: item });
+    }
     if (type === 'report') {
       v.data.status = v.data.status || 'draft'; v.data.created_by = 'manual';
       const dup = (await desk.list('report', { client_id: v.data.client_id })).find(function (r) { return r.period === v.data.period; });
@@ -783,9 +796,15 @@ async function deskApi(req, res, url) {
       if (before && before.sources) v.data.sources = reportingLib.sourcesAfterEdit(before, v.data.metrics);
     }
     const item = await desk.update(type, id, v.data);
+    if (item && type === 'asset' && ('history' in v.data || 'status' in v.data)) await syncHealthReports(item.client_id);
     return item ? json(res, 200, { item: item }) : json(res, 404, { error: 'Not found.' });
   }
-  if (id && m === 'DELETE') { await desk.remove(type, id); return json(res, 200, { ok: true }); }
+  if (id && m === 'DELETE') {
+    const before = type === 'asset' ? await desk.get('asset', id) : null;
+    await desk.remove(type, id);
+    if (before) await syncHealthReports(before.client_id);
+    return json(res, 200, { ok: true });
+  }
   return json(res, 405, { error: 'Method not allowed' });
 }
 
@@ -802,7 +821,11 @@ async function ensureReportDrafts(period, force) {
     if (reports.some(function (r) { return r.client_id === c.id && r.period === period; })) continue;
     const key = 'report-draft:' + c.id + ':' + period;
     if (!force && await desk.seen(key)) continue;
-    await desk.create('report', { client_id: c.id, period: period, metrics: {}, status: 'draft', created_by: 'auto' }, { client_id: c.id });
+    const draft = { client_id: c.id, period: period, metrics: {}, status: 'draft', created_by: 'auto' };
+    const hm = healthLib.metricsFor(await desk.list('asset', { client_id: c.id }), period);
+    if (hm) Object.assign(draft, reportingLib.mergeMetrics(draft, 'health', hm));
+    delete draft.written; delete draft.kept;
+    await desk.create('report', draft, { client_id: c.id });
     await desk.markSeen(key);
     created++;
   }
@@ -844,6 +867,119 @@ async function reportCommentary(req, res, id) {
     console.error('report_commentary_failed', id, e.message);
     return json(res, 502, { error: 'Claude couldn’t draft this right now. Please try again.' });
   }
+}
+
+// ---------- Digital Health ----------
+const healthLib = require('./lib/health');
+const HEALTH_ALLOW_PRIVATE = process.env.HEALTH_FETCH_ALLOW_PRIVATE === '1'; // tests only: lets scans reach 127.0.0.1
+
+// Draft reports carry the client's Digital Health numbers (average of its live assets' latest scans in that month).
+// Numbers typed by hand are kept; reports marked Ready or Sent are left alone.
+async function syncHealthReports(clientId) {
+  if (!clientId) return;
+  const [assets, reports] = await Promise.all([desk.list('asset', { client_id: clientId }), desk.list('report', { client_id: clientId })]);
+  for (const r of reports) {
+    if ((r.status || 'draft') !== 'draft') continue;
+    const hm = healthLib.metricsFor(assets, r.period);
+    if (!hm) continue;
+    const merged = reportingLib.mergeMetrics(r, 'health', hm);
+    if (merged.written.length) await desk.update('report', r.id, { metrics: merged.metrics, sources: merged.sources });
+  }
+}
+
+async function healthFetch(req, res) {
+  const body = (await readJson(req, 4096)) || {};
+  try {
+    return json(res, 200, await healthLib.fetchPage(body.url, { allowPrivate: HEALTH_ALLOW_PRIVATE }));
+  } catch (e) {
+    return json(res, 400, { error: e.message });
+  }
+}
+
+async function healthReview(req, res, id) {
+  if (!ANTHROPIC_KEY) return json(res, 503, { error: 'Set ANTHROPIC_API_KEY on the server to review with Claude.' });
+  const a = await desk.get('asset', id);
+  if (!a) return json(res, 404, { error: 'Asset not found.' });
+  if (!a.scan || !a.scan.text) return json(res, 400, { error: 'Scan the page first.' });
+  const c = a.client_id ? await desk.get('client', a.client_id) : null;
+  try {
+    const review = await healthLib.draftReview(healthLib.reviewContext(a, c && (c.company || c.name)), { model: REPORT_MODEL, apiKey: ANTHROPIC_KEY, apiBase: ANTHROPIC_BASE });
+    return json(res, 200, { item: await desk.update('asset', a.id, { review: review }) });
+  } catch (e) {
+    console.error('health_review_failed', id, e.message);
+    return json(res, 502, { error: 'Claude couldn’t review this right now. Please try again.' });
+  }
+}
+
+// A failed check or a Claude recommendation becomes a to-do in the client's General To-Dos.
+async function generalTodos(clientId) {
+  const projects = await desk.list('project', { client_id: clientId });
+  let project = projects.find(function (p) { return String(p.name || '').toLowerCase() === 'general to-dos'; });
+  return project || desk.create('project', { client_id: clientId, name: 'General To-Dos', status: 'in_progress', description: 'Follow-ups from email and meetings.' }, { client_id: clientId });
+}
+async function healthFix(req, res, id) {
+  const a = await desk.get('asset', id);
+  if (!a) return json(res, 404, { error: 'Asset not found.' });
+  if (!a.client_id) return json(res, 400, { error: 'Assign this asset to a client to add to-dos.' });
+  const body = (await readJson(req, 4096)) || {};
+  const check = body.check_id && healthLib.fields.checks({ [body.check_id]: {} }).value[body.check_id] ? body.check_id : null;
+  const title = clip(body.title || '', 300);
+  if (!check && !title) return json(res, 400, { error: 'Choose a fix.' });
+  const project = await generalTodos(a.client_id);
+  const existing = await desk.list('task', { project_id: project.id });
+  const H = require('./public/assets/health.js');
+  const text = check ? H.CHECK_BY_ID[check].name + ' — ' + a.name : title + ' — ' + a.name;
+  const task = await desk.create('task', { project_id: project.id, title: clip(text, 300), done: false, position: existing.length }, { client_id: a.client_id, project_id: project.id });
+  let item = a;
+  if (check) {
+    const checks = Object.assign({}, a.checks || {}); checks[check] = Object.assign({}, checks[check] || {}, { task_id: task.id });
+    item = await desk.update('asset', a.id, { checks: checks });
+  }
+  return json(res, 200, { item: item, task: task, project: { id: project.id, name: project.name } });
+}
+async function healthRelink(req, res, id) {
+  const a = await desk.get('asset', id);
+  if (!a) return json(res, 404, { error: 'Asset not found.' });
+  const body = (await readJson(req, 1024)) || {};
+  const cid = body.client_id ? String(body.client_id) : null;
+  if (cid && !(await desk.get('client', cid))) return json(res, 400, { error: 'Client not found.' });
+  const item = await desk.relink('asset', id, cid);
+  await syncHealthReports(a.client_id); await syncHealthReports(cid);
+  return json(res, 200, { item: item });
+}
+
+// Import assets exported from the standalone Digital Health tool. Each asset is matched to a client by name,
+// business name or "Also match" names; anything unmatched comes in as an internal (Aethera) asset.
+async function healthImport(req, res) {
+  const body = await readJson(req, 2 * 1024 * 1024);
+  const list = body && Array.isArray(body.assets) ? body.assets.slice(0, 500) : null;
+  if (!list) return json(res, 400, { error: 'Choose an export file.' });
+  const clients = await desk.allOf('client');
+  const norm = function (x) { return String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
+  const match = function (name) {
+    const n = norm(name); if (!n) return null;
+    return clients.find(function (c) {
+      return [c.name, c.company].concat(String(c.aliases || '').split(/[,;\n]/)).some(function (x) { return norm(x) && norm(x) === n; });
+    }) || null;
+  };
+  const existing = await desk.allOf('asset');
+  const out = { created: 0, skipped: 0, internal: 0, errors: [] };
+  const touched = new Set();
+  for (const raw of list) {
+    if (!raw || typeof raw !== 'object') continue;
+    const c = match(raw.client);
+    const input = Object.assign({}, raw); delete input.client; delete input.id; delete input.client_id;
+    if (c) input.client_id = c.id;
+    if (input.status === 'In progress') input.status = 'in_progress';
+    input.status = ['live', 'in_progress', 'planned', 'archived'].indexOf(input.status) >= 0 ? input.status : String(input.status || '').toLowerCase() === 'live' ? 'live' : 'in_progress';
+    const v = deskLib.validate('asset', input, false);
+    if (v.error) { out.errors.push((raw.name || 'Untitled') + ': ' + v.error); continue; }
+    if (existing.some(function (e) { return e.name === v.data.name && (e.client_id || null) === (c ? c.id : null); })) { out.skipped++; continue; }
+    await desk.create('asset', v.data, c ? { client_id: c.id } : {});
+    out.created++; if (!c) out.internal++; else touched.add(c.id);
+  }
+  for (const cid of touched) await syncHealthReports(cid);
+  return json(res, 200, out);
 }
 
 // ---------- Suggested to-dos: Apps Script collector -> Claude -> Desk ----------

@@ -57,6 +57,28 @@ Add `aetheradigital.com`, `www.aetheradigital.com` and `admin.aetheradigital.com
   changed by hand is never overwritten, and reports marked Ready or Sent are left alone.
 - The client page shows the last pull for each connection, including problems such as "No access to this GA4 property".
 
+## Digital Health (SEO + AI search)
+
+**Digital Health** in the Desk scores each page or profile ("asset") for SEO and AI search (AISO) and blends them 50/50
+into a Digital Health Score. Checks, weights and the page analyzer live in `public/assets/health.js`; server-side
+cleaning, page fetching, Claude review and report numbers in `lib/health.js`.
+
+1. **New Asset** (on Digital Health or a client's **Health** tab): name, client (or Aethera internal), type, URL, status.
+2. **Scan** fetches the page and its robots.txt through the server (public addresses only, 3 MB cap, up to 5 redirects) and runs
+   the 25 automatic checks in the browser. Pages that build their content with JavaScript from a `<template>` are scored on that
+   content, and "Readable without JavaScript" is scored on the raw HTML. Preview or password-protected pages: paste the source.
+   Scans only run when you click Scan.
+3. **Checks**: mark the manual ones Pass / Partial / Fail / N/A with notes. **Review With Claude** (needs `ANTHROPIC_API_KEY`)
+   scores the judgment checks and suggests fixes, a title, a meta description, FAQs and prompts.
+4. **AI Visibility**: questions customers would ask an assistant, with the result per engine (cited, mentioned, not present).
+5. **Fixes**: failed checks and Claude's recommendations go to the client's **General To-Dos** with one click. Internal
+   assets keep their own task list.
+6. **Reports**: draft monthly reports get a **Digital Health** section (score, SEO, AISO) for clients on SEO & AI Search or
+   Website services: the average of the client's **Live** assets' latest scans in that month. Typed numbers and reports marked
+   Ready or Sent are left alone.
+7. **Import** brings in assets from the standalone Digital Health tool ("Copy export for the Desk", then paste). Assets match
+   clients by name, business name or "Also Matches"; unmatched ones come in as internal.
+
 ## How invoicing works
 
 1. Sign in at `https://admin.aetheradigital.com` (or `/admin` on the onrender.com address) and create an invoice (client, line items, due date, note). It's created and finalized in Stripe.
