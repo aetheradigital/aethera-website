@@ -55,7 +55,8 @@
   var METRIC = {
     seo_clicks: ['Search Clicks', 'n'], seo_impressions: ['Search Impressions', 'n'], seo_avg_position: ['Avg. Search Position', 'p'],
     sessions: ['Website Sessions', 'n'], leads: ['Leads', 'n'], ad_spend: ['Ad Spend', '$'], ad_clicks: ['Ad Clicks', 'n'],
-    ad_conversions: ['Ad Conversions', 'n'], social_followers: ['Social Followers', 'n'], social_engagement: ['Social Engagements', 'n'], revenue: ['Attributed Revenue', '$']
+    ad_conversions: ['Ad Conversions', 'n'], social_followers: ['Social Followers', 'n'], social_engagement: ['Social Engagements', 'n'], revenue: ['Attributed Revenue', '$'],
+    health_score: ['Digital Health Score', 'n'], seo_score: ['SEO Score', 'n'], aiso_score: ['AI Search (AISO) Score', 'n']
   };
   function mfmt(k, v) { var t = (METRIC[k] || [k, 'n'])[1]; return t === '$' ? usd(v) : t === 'p' ? num(v, 1) : num(v); }
 
@@ -152,7 +153,7 @@
       } });
   }
   // ---------- reporting connections ----------
-  var SRC = { gsc: 'Search Console', ga4: 'Google Analytics' };
+  var SRC = { gsc: 'Search Console', ga4: 'Google Analytics', health: 'Digital Health scans' };
   function editConnections(c, then) {
     modal({ title: 'Reporting Connections', submit: 'Save Connections', values: c, fields: [
       { name: 'gsc_site', label: 'Search Console Site', placeholder: 'e.g. aetheradigital.com',
@@ -254,6 +255,8 @@
     if (p[0] === 'reports' && p[1]) return reportView(p[1], q.edit === '1');
     if (p[0] === 'reports') return reportsView(q.month);
     if (p[0] === 'invoices') return invoicesView(q);
+    if (p[0] === 'health' && p[1]) return assetView(p[1], p[2] || 'checks');
+    if (p[0] === 'health') return healthView(q.client || '');
     if (p[0] === 'quotes' && window.DeskQuotes) return window.DeskQuotes.route(p, q);
     overview();
   }
@@ -413,8 +416,8 @@
     loading();
     desk('GET', '/clients/' + id + '/full').then(function (d) {
       var c = d.client; var base = '#/clients/' + c.id;
-      var counts = { projects: d.projects.length, files: d.files.length, approvals: d.approvals.filter(function (a) { return a.status === 'pending'; }).length, reports: d.reports.length, quotes: (d.quotes || []).length, invoices: d.invoices.length };
-      var tabs = h('nav', { class: 'tabs', 'aria-label': 'Client sections' }, [['overview', 'Overview'], ['projects', 'Projects'], ['files', 'Files'], ['approvals', 'Approvals'], ['reports', 'Reports'], ['quotes', 'Quotes'], ['invoices', 'Invoices']].map(function (t) {
+      var counts = { health: (d.assets || []).length, projects: d.projects.length, files: d.files.length, approvals: d.approvals.filter(function (a) { return a.status === 'pending'; }).length, reports: d.reports.length, quotes: (d.quotes || []).length, invoices: d.invoices.length };
+      var tabs = h('nav', { class: 'tabs', 'aria-label': 'Client sections' }, [['overview', 'Overview'], ['projects', 'Projects'], ['health', 'Health'], ['files', 'Files'], ['approvals', 'Approvals'], ['reports', 'Reports'], ['quotes', 'Quotes'], ['invoices', 'Invoices']].map(function (t) {
         return h('a', { href: base + (t[0] === 'overview' ? '' : '/' + t[0]), 'aria-current': tab === t[0] ? 'page' : null }, t[1], counts[t[0]] ? h('small', { text: String(counts[t[0]]) }) : null);
       }));
       var statusSel = h('select', { class: 'st ' + (c.status || 'lead'), 'aria-label': 'Client status', onchange: function (e) {
@@ -427,6 +430,7 @@
       else if (tab === 'approvals') body = clientApprovals(c, d, reload);
       else if (tab === 'reports') body = clientReports(c, d);
       else if (tab === 'invoices') body = clientInvoices(c, d);
+      else if (tab === 'health') body = clientHealth(c, d, reload);
       else if (tab === 'quotes' && window.DeskQuotes) body = window.DeskQuotes.clientTab(c, d);
       else body = clientOverview(c, d, reload);
       render(pageHead(c.company ? c.name : 'Client', [c.company || c.name, ' ', statusSel],
@@ -1084,6 +1088,377 @@
         }).catch(function (x) { err.textContent = x.message; err.hidden = false; }).then(function () { btns.forEach(function (b) { b.disabled = false; }); });
     });
     return h('div', { class: 'panel', style: 'margin-bottom:22px' }, h('h2', null, 'New Invoice', h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close', text: '×', onclick: onClose })), form, created);
+  }
+
+  // ---------- Digital Health (SEO + AI search) ----------
+  // Scans: the server fetches the page and robots.txt; checks run here (public/assets/health.js).
+  var HL = window.AetheraHealth;
+  var ASSET_STATUS = [['live', 'Live'], ['in_progress', 'In Progress'], ['planned', 'Planned'], ['archived', 'Archived']];
+  var ASSET_STATUS_LABEL = { live: 'Live', in_progress: 'In Progress', planned: 'Planned', archived: 'Archived' };
+  var RESULT_LABEL = { untested: 'Not Tested', cited: 'Cited With Link', mentioned: 'Mentioned', absent: 'Not Present' };
+  var GRADE_COLOR = { 'h-good': 'var(--sage)', 'h-ok': 'var(--sky)', 'h-warn': '#F6E7A1', 'h-bad': 'var(--err)', 'h-none': 'var(--mute)' };
+
+  function ring(score, size, stroke) {
+    var g = HL.grade(score); var r = (size - stroke) / 2; var c = 2 * Math.PI * r; var pct = score == null ? 0 : score / 100;
+    var s = svg('svg', { width: size, height: size, viewBox: '0 0 ' + size + ' ' + size, class: 'ring', role: 'img', 'aria-label': score == null ? 'Not scored' : score + ' out of 100' });
+    s.appendChild(svg('circle', { cx: size / 2, cy: size / 2, r: r, fill: 'none', stroke: 'rgba(255,255,255,.08)', 'stroke-width': stroke }));
+    s.appendChild(svg('circle', { cx: size / 2, cy: size / 2, r: r, fill: 'none', stroke: GRADE_COLOR[g.cls], 'stroke-width': stroke, 'stroke-linecap': 'round',
+      'stroke-dasharray': (c * pct) + ' ' + c, transform: 'rotate(-90 ' + size / 2 + ' ' + size / 2 + ')' }));
+    var t = svg('text', { x: '50%', y: '50%', 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': Math.round(size * 0.3) });
+    t.textContent = score == null ? '—' : String(score); s.appendChild(t);
+    return s;
+  }
+  function gpill(score) { var g = HL.grade(score); return h('span', { class: 'st ' + g.cls, text: g.label }); }
+  function hbar(v, pillar) { return h('div', { class: 'hbar ' + pillar, title: v == null ? 'Not scored' : String(v) }, h('i', { style: 'width:' + (v || 0) + '%' })); }
+  function clientName(cl) { return cl ? (cl.company || cl.name) : 'Aethera (Internal)'; }
+  function avgOf(list, k) { var v = list.map(function (s) { return s[k]; }).filter(function (n) { return n != null; }); return v.length ? Math.round(v.reduce(function (a, b) { return a + b; }, 0) / v.length) : null; }
+  function scoreRow(a) { var s = HL.scores(a); return { seo: s.seo, aiso: s.aiso, dhs: s.dhs, scored: s.scored, total: s.total }; }
+
+  function assetTable(list, byId, showClient) {
+    var tbody = h('tbody');
+    list.forEach(function (a) {
+      var s = HL.scores(a);
+      tbody.appendChild(h('tr', { class: 'link', tabindex: '0', onclick: function () { location.hash = '#/health/' + a.id; }, onkeydown: function (e) { if (e.key === 'Enter') location.hash = '#/health/' + a.id; } },
+        h('td', { class: 'who' }, h('b', { text: a.name }), h('small', { text: [showClient ? clientName(byId[a.client_id]) : null, HL.TYPES[a.type] || a.type, ASSET_STATUS_LABEL[a.status] || ''].filter(Boolean).join(' · ') })),
+        h('td', null, h('div', { class: 'hcell' }, ring(s.dhs, 42, 5), gpill(s.dhs))),
+        h('td', null, h('div', { class: 'hcell' }, h('span', { class: 'hnum', text: s.seo == null ? '—' : String(s.seo) }), hbar(s.seo, 'seo'))),
+        h('td', null, h('div', { class: 'hcell' }, h('span', { class: 'hnum', text: s.aiso == null ? '—' : String(s.aiso) }), hbar(s.aiso, 'aiso'))),
+        h('td', { class: 'num', text: s.scored + '/' + s.total }),
+        h('td', { class: 'num', text: day(a.updated_at) })));
+    });
+    return h('div', { class: 'card flush' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', { text: 'Asset' }), h('th', { text: 'Health' }), h('th', { text: 'SEO' }), h('th', { text: 'AISO' }), h('th', { class: 'num', text: 'Checks' }), h('th', { class: 'num', text: 'Updated' }))), tbody));
+  }
+
+  function editAsset(a, clients, presetClient, then) {
+    var opts = [['', 'Aethera (Internal)']].concat(clients.map(function (c) { return [c.id, c.company || c.name]; }));
+    modal({ title: a ? 'Edit Asset' : 'New Asset', submit: a ? 'Save' : 'Add Asset', values: a || { client_id: presetClient || '', type: 'page', status: 'live' }, fields: [
+      { name: 'name', label: 'Name', required: true, placeholder: 'e.g. Bacon Roofing — Home page' },
+      { name: 'client_id', label: 'Client', type: 'select', options: opts, half: true },
+      { name: 'type', label: 'Type', type: 'select', options: Object.keys(HL.TYPES).map(function (k) { return [k, HL.TYPES[k]]; }), half: true },
+      { name: 'url', label: 'URL', placeholder: 'https://', type: 'url' },
+      { name: 'status', label: 'Status', type: 'select', options: ASSET_STATUS, help: 'Only Live assets count toward a client’s report score.' }
+    ], onSubmit: function (d) {
+      if (!d.name) throw new Error('Enter a name.');
+      if (d.url && !/^https?:\/\//i.test(d.url)) d.url = 'https://' + d.url;
+      var cid = d.client_id || null; delete d.client_id;
+      if (!a) { if (cid) d.client_id = cid; return desk('POST', '/assets', d).then(function (r) { toast('Asset added'); then(r.item); }); }
+      return desk('PATCH', '/assets/' + a.id, d).then(function (r) {
+        if ((a.client_id || null) === cid) return r;
+        return desk('POST', '/assets/' + a.id + '/client', { client_id: cid });
+      }).then(function (r) { toast('Asset saved'); then(r.item); });
+    } });
+  }
+
+  function importAssets(done) {
+    var inp = h('input', { type: 'file', accept: 'application/json,.json', id: 'imp_file' });
+    var paste = h('textarea', { id: 'imp_paste', rows: 5, class: 'mono', placeholder: 'Paste here after clicking “Copy export for the Desk” in the standalone tool' });
+    var err = h('p', { class: 'err', role: 'alert', hidden: true });
+    var go = h('button', { class: 'pill', type: 'button', text: 'Import', onclick: function () {
+      var f = inp.files && inp.files[0];
+      if (!f && !paste.value.trim()) { err.textContent = 'Paste the export or choose the file.'; err.hidden = false; return; }
+      go.disabled = true;
+      (f ? f.text() : Promise.resolve(paste.value)).then(function (t) {
+        var j = JSON.parse(t); return desk('POST', '/health/import', { assets: Array.isArray(j) ? j : j.assets });
+      }).then(function (r) {
+        box.remove(); toast(r.created + ' imported' + (r.skipped ? ', ' + r.skipped + ' already here' : '') + (r.errors.length ? ', ' + r.errors.length + ' skipped with errors' : ''), r.errors.length > 0); done();
+      }).catch(function (x) { err.textContent = x.message || 'That file couldn’t be read.'; err.hidden = false; go.disabled = false; });
+    } });
+    var box = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Import Assets', onclick: function (e) { if (e.target === box) box.remove(); } },
+      h('div', { class: 'card' }, h('h2', null, 'Import Assets'),
+        h('p', { class: 'was', text: 'Paste a Digital Health export or choose an export file. Assets are matched to clients by name, business name or “Also Matches”; anything unmatched comes in as an internal asset. Assets already in the Desk are skipped.' }),
+        h('div', { class: 'fld' }, h('label', { for: 'imp_paste', text: 'Pasted Export' }), paste),
+        h('div', { class: 'fld' }, h('label', { for: 'imp_file', text: 'Or an Export File' }), inp), err,
+        h('div', { class: 'btns' }, h('button', { class: 'pill ghost', type: 'button', text: 'Cancel', onclick: function () { box.remove(); } }), go)));
+    document.body.appendChild(box);
+  }
+
+  function healthView(clientFilter) {
+    loading();
+    Promise.all([desk('GET', '/assets'), desk('GET', '/clients')]).then(function (both) {
+      var assets = both[0].items; var clients = both[1].items; var byId = {}; clients.forEach(function (c) { byId[c.id] = c; });
+      var filter = clientFilter || '';
+      var wrap = h('div');
+      function draw() {
+        wrap.innerHTML = '';
+        var list = assets.filter(function (a) { return !filter || (filter === 'internal' ? !a.client_id : a.client_id === filter); })
+          .sort(function (x, y) { return clientName(byId[x.client_id]).localeCompare(clientName(byId[y.client_id])) || x.name.localeCompare(y.name); });
+        var live = list.filter(function (a) { return a.status === 'live'; }).map(scoreRow).filter(function (s) { return s.dhs != null; });
+        var fails = list.reduce(function (n, a) { return n + HL.priorities(a).filter(function (p) { return p.s === 'fail'; }).length; }, 0);
+        var avg = avgOf(live, 'dhs');
+        add(wrap, h('div', { class: 'grid g4' },
+          h('div', { class: 'tile' }, h('div', { class: 'k', text: 'Digital Health' }), h('div', { class: 'v', text: avg == null ? '—' : String(avg) }), h('div', { class: 's' }, gpill(avg), ' Live assets')),
+          tile('SEO Average', avgOf(live, 'seo') == null ? '—' : String(avgOf(live, 'seo')), 'Live assets'),
+          tile('AISO Average', avgOf(live, 'aiso') == null ? '—' : String(avgOf(live, 'aiso')), 'Live assets'),
+          tile('Failed Checks', String(fails), list.length + ' asset' + (list.length === 1 ? '' : 's'), fails > 0)));
+        var chipIds = [['', 'All']].concat(clients.filter(function (c) { return assets.some(function (a) { return a.client_id === c.id; }); }).map(function (c) { return [c.id, c.company || c.name]; }));
+        if (assets.some(function (a) { return !a.client_id; })) chipIds.push(['internal', 'Aethera (Internal)']);
+        add(wrap, h('div', { class: 'toolbar', style: 'margin-top:22px' }, chipIds.map(function (x) {
+          return h('button', { class: 'chip', type: 'button', 'aria-pressed': String(filter === x[0]), text: x[1], onclick: function () { filter = x[0]; draw(); } });
+        })));
+        add(wrap, list.length ? assetTable(list, byId, true) : h('div', { class: 'panel' }, emptyLine(assets.length ? 'No assets for this client yet.' : 'No assets yet. Add a page or profile to score it, or import the ones you scored in the standalone tool.')));
+      }
+      render(pageHead('Digital Health', ['SEO & ', h('em', { text: 'AI search' })], [
+        btn('New Asset', function () { editAsset(null, clients, filter && filter !== 'internal' ? filter : '', function (a) { location.hash = '#/health/' + a.id + '/scan'; }); }),
+        btn('Import', function () { importAssets(function () { healthView(filter); }); }, 'ghost')]), wrap);
+      draw();
+    }).catch(failed);
+  }
+
+  function clientHealth(c, d, reload) {
+    var byId = {}; byId[c.id] = c;
+    return h('div', null,
+      h('div', { class: 'toolbar' }, btn('New Asset', function () {
+        desk('GET', '/clients').then(function (r) { editAsset(null, r.items, c.id, function (a) { location.hash = '#/health/' + a.id + '/scan'; }); });
+      })),
+      (d.assets || []).length ? assetTable(d.assets, byId, false) : h('div', { class: 'panel' }, emptyLine('No pages or profiles scored for this client yet.')));
+  }
+
+  function spark(hist) {
+    if (!hist || hist.length < 2) return h('p', { class: 'was', text: 'Save a snapshot after each round of work to chart progress here.' });
+    var W = 320, H = 86, P = 16; var pts = hist.slice(-12);
+    var x = function (i) { return P + (W - 2 * P) * (i / (pts.length - 1)); }; var y = function (v) { return H - P - (H - 2 * P) * ((v || 0) / 100); };
+    var s = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'spark', role: 'img', 'aria-label': 'Digital Health Score history' });
+    [50, 100].forEach(function (g) { s.appendChild(svg('line', { x1: P, x2: W - P, y1: y(g), y2: y(g), stroke: 'rgba(255,255,255,.08)' })); });
+    var line = pts.map(function (p, i) { return x(i).toFixed(1) + ',' + y(p.dhs).toFixed(1); }).join(' ');
+    s.appendChild(svg('polygon', { points: x(0) + ',' + (H - P) + ' ' + line + ' ' + x(pts.length - 1) + ',' + (H - P), fill: 'rgba(200,182,255,.12)' }));
+    s.appendChild(svg('polyline', { points: line, fill: 'none', stroke: CHART, 'stroke-width': 1.8 }));
+    var last = pts[pts.length - 1];
+    s.appendChild(svg('circle', { cx: x(pts.length - 1), cy: y(last.dhs), r: 3.5, fill: '#fff' }));
+    var t1 = svg('text', { x: P, y: H - 2 }); t1.textContent = day(new Date(pts[0].date).toISOString()); s.appendChild(t1);
+    var t2 = svg('text', { x: W - P, y: H - 2, 'text-anchor': 'end' }); t2.textContent = day(new Date(last.date).toISOString()) + ' · ' + last.dhs; s.appendChild(t2);
+    return s;
+  }
+
+  function assetView(id, tab) {
+    loading();
+    Promise.all([desk('GET', '/assets/' + id), desk('GET', '/clients')]).then(function (both) {
+      var a = both[0].item; var clients = both[1].items; var cl = clients.find(function (c) { return c.id === a.client_id; }) || null;
+      var web = HL.kindOf(a.type) === 'web';
+      if (tab === 'scan' && !web) tab = 'checks';
+      var base = '#/health/' + a.id;
+      var bodyWrap = h('div');
+      var heroWrap = h('div');
+      // Every save sends the recomputed score so lists and reports don't have to re-score.
+      function save(patch, msg) {
+        var next = Object.assign({}, a, patch);
+        patch.score = scoreRow(next);
+        return desk('PATCH', '/assets/' + a.id, patch).then(function (r) { a = r.item; if (msg) toast(msg); paint(); return a; })
+          .catch(function (x) { toast(x.message, true); throw x; });
+      }
+      function snapshot() {
+        var s = scoreRow(a); if (s.dhs == null) { toast('Score some checks first', true); return; }
+        save({ history: (a.history || []).concat([{ date: Date.now(), seo: s.seo, aiso: s.aiso, dhs: s.dhs }]).slice(-60) }, 'Snapshot saved');
+      }
+      function hero() {
+        var s = HL.scores(a); var v = HL.visibility(a);
+        return h('div', { class: 'panel hhero' },
+          h('div', { class: 'hrings' },
+            h('div', null, ring(s.dhs, 128, 11), h('div', { class: 'hlabel', text: 'Digital Health' })),
+            h('div', null, ring(s.seo, 82, 8), h('div', { class: 'hlabel', text: 'SEO' })),
+            h('div', null, ring(s.aiso, 82, 8), h('div', { class: 'hlabel', text: 'AISO' }))),
+          h('div', { class: 'hmeta' },
+            h('div', null, gpill(s.dhs), ' ', h('span', { class: 'st ' + (a.status === 'live' ? 'active' : 'planned'), text: ASSET_STATUS_LABEL[a.status] || '' })),
+            h('p', null, [HL.TYPES[a.type], a.url ? h('a', { href: a.url, target: '_blank', rel: 'noopener', text: a.url.replace(/^https?:\/\//, '') }) : null].filter(Boolean).reduce(function (acc, x, i) { if (i) acc.push(' · '); acc.push(x); return acc; }, [])),
+            h('p', { class: 'was', text: s.scored + ' of ' + s.total + ' checks verified' + (s.total - s.scored ? ' (' + (s.total - s.scored) + ' unverified count as 0)' : '') + (v.tested ? ' · in ' + (v.cited + v.mentioned) + ' of ' + v.tested + ' AI answers' : '') + (a.scan && a.scan.date ? ' · scanned ' + day(new Date(a.scan.date).toISOString()) : '') }),
+            spark(a.history)));
+      }
+      function paint() {
+        heroWrap.innerHTML = ''; add(heroWrap, hero());
+        bodyWrap.innerHTML = '';
+        add(bodyWrap, tab === 'scan' ? scanTab() : tab === 'visibility' ? visTab() : tab === 'fixes' ? fixTab() : tab === 'report' ? reportTab() : checksTab());
+      }
+
+      // --- checks ---
+      function checksTab() {
+        var s = HL.scores(a); var list = HL.checksFor(a.type); var out = [];
+        ['seo', 'aiso'].forEach(function (p) {
+          out.push(h('h2', { class: 'hpillar' }, p === 'seo' ? 'SEO' : 'AI Search (AISO)', h('span', { class: 'st ' + (p === 'seo' ? 'h-ok' : 'h-aiso'), text: s[p] == null ? '—' : String(s[p]) })));
+          var cats = []; list.forEach(function (c) { if (c.pillar === p && cats.indexOf(c.cat) < 0) cats.push(c.cat); });
+          cats.forEach(function (cat) {
+            var cs = s.catScores.find(function (x) { return x.pillar === p && x.cat === cat; });
+            out.push(h('div', { class: 'panel hcat' }, h('h2', null, cat, h('span', { class: 'hcell' }, h('small', { text: cs.score == null ? '—' : String(cs.score) }), hbar(cs.score, p))),
+              list.filter(function (c) { return c.pillar === p && c.cat === cat; }).map(checkRow)));
+          });
+        });
+        return h('div', null, out);
+      }
+      function checkRow(c) {
+        var rec = (a.checks || {})[c.id] || {}; var st = HL.statusOf(a, c);
+        var ctrl;
+        if (c.derived) { var v = HL.visibility(a); ctrl = h('span', { class: 'was', text: v.tested ? v.cited + ' cited · ' + v.mentioned + ' mentioned · ' + v.tested + ' tested' : 'Track prompts in AI Visibility' }); }
+        else ctrl = h('div', { class: 'seg', role: 'group', 'aria-label': 'Status for ' + c.name }, [['pass', 'Pass'], ['partial', 'Partial'], ['fail', 'Fail'], ['na', 'N/A']].map(function (o) {
+          return h('button', { type: 'button', class: o[0], 'aria-pressed': String(st === o[0]), text: o[1], onclick: function () {
+            var checks = Object.assign({}, a.checks || {}); var r = Object.assign({}, checks[c.id] || {});
+            if (r.s === o[0]) delete r.s; else { r.s = o[0]; r.src = 'Manual'; r.at = Date.now(); }
+            checks[c.id] = r; save({ checks: checks });
+          } });
+        }));
+        var note = c.derived ? null : h('input', { class: 'hnote', type: 'text', id: 'note_' + c.id, 'aria-label': 'Note for ' + c.name, placeholder: 'Note (evidence, link, who’s on it)', value: rec.n || '', onchange: function (e) {
+          var checks = Object.assign({}, a.checks || {}); checks[c.id] = Object.assign({}, checks[c.id] || {}, { n: e.target.value }); save({ checks: checks }, 'Note saved');
+        } });
+        return h('div', { class: 'hchk' }, h('span', { class: 'hstripe ' + st }),
+          h('div', { class: 'grow' }, h('b', { text: c.name }),
+            h('small', { text: ['Weight ' + c.w, c.auto ? 'Automatic' : c.derived ? 'From AI visibility tracking' : 'Manual', rec.src && rec.src !== 'Auto-check' ? rec.src : null, rec.at ? day(new Date(rec.at).toISOString()) : null].filter(Boolean).join(' · ') }),
+            rec.auto ? h('p', { class: 'hauto', text: rec.auto }) : null,
+            (st === 'fail' || st === 'partial') ? h('p', { class: 'hauto' }, h('b', { text: 'Fix: ' }), c.fix) : null,
+            note),
+          h('div', { class: 'hctrl' }, ctrl));
+      }
+
+      // --- scan ---
+      var lastRun = null;
+      function applyScan(html, finalUrl, robots, robotsStatus, how) {
+        var r = HL.analyzePage(html, finalUrl || a.url, robots || '', a.type);
+        var results = r.results.slice();
+        if (!robots && robotsStatus === 404) results.push({ id: 'ai_crawlers', s: 'pass', note: 'No robots.txt, so all crawlers are allowed by default. Add one with a Sitemap line.' });
+        var now = Date.now(); var checks = Object.assign({}, a.checks || {});
+        results.forEach(function (x) { checks[x.id] = Object.assign({}, checks[x.id] || {}, { s: x.s, auto: x.note, src: how, at: now }); });
+        var next = Object.assign({}, a, { checks: checks }); var s = scoreRow(next);
+        var patch = { checks: checks, scan: Object.assign({}, r.scan, { url: finalUrl || a.url || '', rendered: r.rendered }) };
+        if (s.dhs != null) patch.history = (a.history || []).concat([{ date: now, seo: s.seo, aiso: s.aiso, dhs: s.dhs }]).slice(-60);
+        if (finalUrl && !a.url) patch.url = finalUrl;
+        lastRun = results;
+        return save(patch, results.length + ' checks updated');
+      }
+      function scanTab() {
+        var url = h('input', { id: 'scan_url', type: 'url', value: a.url || '', placeholder: 'https://', 'aria-label': 'Page URL' });
+        var go = h('button', { class: 'pill', type: 'button', text: 'Scan Page', onclick: function () {
+          go.disabled = true; go.textContent = 'Scanning…';
+          desk('POST', '/health/fetch', { url: url.value }).then(function (f) { return applyScan(f.html, f.url, f.robots, f.robots_status, 'Scan'); })
+            .catch(function (x) { toast(x.message, true); go.disabled = false; go.textContent = 'Scan Page'; });
+        } });
+        var src = h('textarea', { id: 'paste_html', rows: 8, class: 'mono', placeholder: '<!doctype html>…' });
+        var rob = h('textarea', { id: 'paste_robots', rows: 3, class: 'mono', placeholder: 'User-agent: *' });
+        var paste = h('details', { class: 'hpaste' }, h('summary', { text: 'Paste the source instead (preview sites, password-protected pages)' }),
+          h('div', { class: 'fld' }, h('label', { for: 'paste_html', text: 'Page Source (View Page Source, then copy everything)' }), src),
+          h('div', { class: 'fld' }, h('label', { for: 'paste_robots', text: 'robots.txt (optional)' }), rob),
+          btn('Run Checks', function () { if (!/<[a-z!]/i.test(src.value)) { toast('Paste the page’s HTML source first', true); return; } applyScan(src.value, url.value || a.url, rob.value, rob.value ? 200 : 0, 'Pasted source'); }));
+        var results = lastRun ? h('div', { class: 'panel', style: 'margin-top:18px' }, h('h2', null, 'Results', h('small', { text: lastRun.length + ' checks' })),
+          a.scan && a.scan.rendered ? h('p', { class: 'was', text: 'This page builds its content with JavaScript. The on-page checks scored that content; “Readable without JavaScript” scored the raw HTML.' }) : null,
+          lastRun.map(function (x) { return h('div', { class: 'hchk' }, h('span', { class: 'hstripe ' + x.s }), h('div', { class: 'grow' }, h('b', { text: HL.CHECK_BY_ID[x.id].name }), h('p', { class: 'hauto', text: x.note }))); }))
+          : a.scan && a.scan.date ? h('div', { class: 'panel', style: 'margin-top:18px' }, h('h2', null, 'Last Scan', h('small', { text: day(new Date(a.scan.date).toISOString()) })),
+            h('dl', { class: 'dl' }, h('dt', { text: 'Title' }), h('dd', { text: a.scan.title || '—' }), h('dt', { text: 'Meta Description' }), h('dd', { text: a.scan.meta || '—' }),
+              h('dt', { text: 'Words' }), h('dd', { text: String(a.scan.words || 0) }), h('dt', { text: 'Schema' }), h('dd', { text: (a.scan.schema || []).join(', ') || 'None' }))) : null;
+        return h('div', null,
+          h('div', { class: 'panel' }, h('h2', null, 'Scan'),
+            h('p', { class: 'was', text: 'Fetches the live page and its robots.txt and runs the ' + HL.CHECKS.filter(function (c) { return c.kind === 'web' && c.auto; }).length + ' automatic checks. Manual checks are left as they are.' }),
+            h('div', { class: 'toolbar' }, h('div', { class: 'fld', style: 'flex:1;min-width:240px;margin:0' }, url), go), paste),
+          results, META.ai ? reviewPanel() : null);
+      }
+      function reviewPanel() {
+        var rv = a.review;
+        var b = h('button', { class: 'pill small', type: 'button', text: rv ? 'Review Again' : 'Review With Claude', disabled: !(a.scan && a.scan.text) ? true : null, onclick: function () {
+          b.disabled = true; b.textContent = 'Reviewing…';
+          desk('POST', '/assets/' + a.id + '/review').then(function (r) { a = r.item; toast('Review ready'); paint(); }).catch(function (x) { toast(x.message, true); b.disabled = false; b.textContent = 'Review With Claude'; });
+        } });
+        var parts = [h('h2', null, 'Claude Review', b), h('p', { class: 'was', text: a.scan && a.scan.text ? 'Reads the scanned copy and scores the judgment checks (keyword use, intent, direct answer, facts, consistency), then suggests fixes, a title, a meta description, FAQs and prompts to track.' : 'Scan the page first.' })];
+        if (rv) {
+          var mc = rv.manual_checks || {}; var keys = Object.keys(mc);
+          parts.push(h('p', { text: rv.summary }), h('div', { class: 'grid g2' }, h('div', null, h('span', { class: 'st h-ok', text: 'SEO' }), h('p', { class: 'hauto', text: rv.seo })), h('div', null, h('span', { class: 'st h-aiso', text: 'AISO' }), h('p', { class: 'hauto', text: rv.aiso }))));
+          if (keys.length) parts.push(h('h3', { class: 'hsub' }, 'Judgment Checks ', btn('Apply These Statuses', function () {
+            var checks = Object.assign({}, a.checks || {}); var now = Date.now();
+            keys.forEach(function (k) { checks[k] = Object.assign({}, checks[k] || {}, { s: mc[k].status, auto: 'Claude: ' + mc[k].reason, src: 'Claude review', at: now }); });
+            save({ checks: checks }, 'Statuses applied');
+          }, 'ghost')), keys.map(function (k) { return h('div', { class: 'hchk' }, h('span', { class: 'hstripe ' + mc[k].status }), h('div', { class: 'grow' }, h('b', { text: HL.CHECK_BY_ID[k].name }), h('p', { class: 'hauto', text: mc[k].reason }))); }));
+          if ((rv.recommendations || []).length) parts.push(h('h3', { class: 'hsub', text: 'Recommendations' }), rv.recommendations.map(function (r) {
+            return h('div', { class: 'hchk' }, h('span', { class: 'st ' + (r.pillar === 'AISO' ? 'h-aiso' : 'h-ok'), text: r.pillar }), h('div', { class: 'grow' }, h('b', { text: r.title }), h('small', { text: r.impact + ' impact' }), h('p', { class: 'hauto', text: r.detail })),
+              btn('Add to To-Dos', function (e) { addTodo({ title: r.title }, { text: r.title, detail: r.detail, pillar: r.pillar, impact: r.impact }, e.target); }, 'ghost'));
+          }));
+          if (rv.suggested_title || rv.suggested_meta) parts.push(h('dl', { class: 'dl', style: 'margin-top:14px' }, h('dt', { text: 'Suggested Title' }), h('dd', { text: rv.suggested_title }), h('dt', { text: 'Suggested Meta' }), h('dd', { text: rv.suggested_meta })));
+          if ((rv.faqs || []).length) parts.push(h('h3', { class: 'hsub', text: 'Suggested FAQs' }), rv.faqs.map(function (f) { return h('div', { class: 'hchk' }, h('div', { class: 'grow' }, h('b', { text: f.q }), h('p', { class: 'hauto', text: f.a }))); }));
+          if ((rv.prompts || []).length) parts.push(h('h3', { class: 'hsub' }, 'Prompts to Track ', btn('Add to AI Visibility', function () {
+            var have = (a.prompts || []).map(function (p) { return p.q.toLowerCase(); });
+            save({ prompts: (a.prompts || []).concat(rv.prompts.filter(function (p) { return have.indexOf(p.toLowerCase()) < 0; }).map(function (p) { return { q: p, engine: 'ChatGPT', result: 'untested', date: null }; })) }, 'Prompts added');
+          }, 'ghost')), h('ul', { class: 'hlist' }, rv.prompts.map(function (p) { return h('li', { text: p }); })));
+        }
+        return h('div', { class: 'panel', style: 'margin-top:18px' }, parts);
+      }
+      // Client assets: a to-do in the client's General To-Dos. Internal assets keep their own task list.
+      function addTodo(serverBody, localTask, b) {
+        if (b) b.disabled = true;
+        if (a.client_id) return desk('POST', '/assets/' + a.id + '/fix', serverBody).then(function (r) { a = r.item; toast('Added to ' + r.project.name); paint(); }).catch(function (x) { if (b) b.disabled = false; toast(x.message, true); });
+        return save({ tasks: (a.tasks || []).concat([Object.assign({ done: false, at: Date.now() }, localTask)]) }, 'Added to this asset’s tasks');
+      }
+
+      // --- AI visibility ---
+      function visTab() {
+        var v = HL.visibility(a); var ps = a.prompts || []; var q = encodeURIComponent;
+        var newQ = h('input', { id: 'np_q', type: 'text', placeholder: 'e.g. best roofing company in Rockwall', 'aria-label': 'New prompt' });
+        var newE = h('select', { id: 'np_e', 'aria-label': 'Engine' }, HL.ENGINES.map(function (e) { return h('option', { text: e }); }));
+        function setP(i, k, val) { var next = ps.map(function (p) { return Object.assign({}, p); }); next[i][k] = val; if (k === 'result') next[i].date = val === 'untested' ? null : Date.now(); save({ prompts: next }); }
+        return h('div', { class: 'panel' },
+          h('h2', null, 'AI Answer Tracking', v.ratio != null ? h('span', { class: 'st ' + (v.status === 'pass' ? 'h-good' : v.status === 'partial' ? 'h-warn' : 'h-bad'), text: 'Visibility ' + Math.round(v.ratio * 100) + '%' }) : null),
+          h('p', { class: 'was', text: 'Run each question in the engine, then record whether the brand was cited with a link, mentioned by name, or missing. Cited counts fully and mentioned counts 60%. This feeds the AISO check “Appears in AI answers.”' }),
+          ps.length ? h('div', { class: 'card flush', style: 'margin:12px 0' }, h('table', { class: 'tbl' }, h('thead', null, h('tr', null, h('th', { text: 'Prompt' }), h('th', { text: 'Engine' }), h('th', { text: 'Result' }), h('th', { class: 'num', text: 'Checked' }), h('th'))),
+            h('tbody', null, ps.map(function (p, i) {
+              return h('tr', null,
+                h('td', { class: 'who' }, h('b', { text: p.q }), h('small', null, h('a', { href: 'https://chatgpt.com/?q=' + q(p.q), target: '_blank', rel: 'noopener', text: 'ChatGPT' }), ' · ', h('a', { href: 'https://www.perplexity.ai/search?q=' + q(p.q), target: '_blank', rel: 'noopener', text: 'Perplexity' }), ' · ', h('a', { href: 'https://www.google.com/search?q=' + q(p.q), target: '_blank', rel: 'noopener', text: 'Google' }), ' · ', h('a', { href: 'https://claude.ai/new?q=' + q(p.q), target: '_blank', rel: 'noopener', text: 'Claude' }))),
+                h('td', null, h('select', { 'aria-label': 'Engine', onchange: function (e) { setP(i, 'engine', e.target.value); } }, HL.ENGINES.map(function (e) { return h('option', { text: e, selected: p.engine === e ? 'selected' : null }); }))),
+                h('td', null, h('select', { 'aria-label': 'Result', onchange: function (e) { setP(i, 'result', e.target.value); } }, HL.PROMPT_RESULTS.map(function (k) { return h('option', { value: k, text: RESULT_LABEL[k], selected: p.result === k ? 'selected' : null }); }))),
+                h('td', { class: 'num', text: p.date ? day(new Date(p.date).toISOString()) : '—' }),
+                h('td', null, h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove prompt', text: '×', onclick: function () { save({ prompts: ps.filter(function (x, j) { return j !== i; }) }, 'Prompt removed'); } })));
+            })))) : emptyLine('No prompts yet. Add the 5–10 questions that matter most for this asset.'),
+          h('form', { class: 'toolbar', style: 'margin-top:12px', onsubmit: function (e) { e.preventDefault(); if (!newQ.value.trim()) return; save({ prompts: ps.concat([{ q: newQ.value.trim(), engine: newE.value, result: 'untested', date: null }]) }, 'Prompt added'); } },
+            h('div', { class: 'fld', style: 'flex:1;min-width:240px;margin:0' }, newQ), h('div', { class: 'fld', style: 'margin:0' }, newE), h('button', { class: 'pill small', type: 'submit', text: 'Add Prompt' })));
+      }
+
+      // --- fixes ---
+      function fixTab() {
+        var pr = HL.priorities(a); var tasks = a.tasks || [];
+        var nt = h('input', { id: 'nt_text', type: 'text', placeholder: 'New task', 'aria-label': 'New task' });
+        return h('div', { class: 'grid g2' },
+          h('div', { class: 'panel' }, h('h2', null, 'From Failed Checks', h('small', { text: String(pr.length) })),
+            pr.length ? pr.map(function (x) {
+              var rec = (a.checks || {})[x.c.id] || {};
+              return h('div', { class: 'hchk' }, h('span', { class: 'hstripe ' + x.s }),
+                h('div', { class: 'grow' }, h('b', { text: x.c.name }), h('small', { text: (x.c.pillar === 'seo' ? 'SEO' : 'AISO') + ' · ' + HL.impactOf(x.c.w) + ' impact' }), h('p', { class: 'hauto', text: x.c.fix })),
+                rec.task_id ? h('span', { class: 'st done', text: 'Added' }) : a.client_id ? btn('Add to To-Dos', function (e) { addTodo({ check_id: x.c.id }, null, e.target); }, 'ghost') : null);
+            }) : emptyLine('Nothing failing. Score more checks to surface priorities.'),
+            !a.client_id && pr.length ? h('p', { class: 'was', text: 'Assign this asset to a client to send fixes to their General To-Dos.' }) : null),
+          h('div', { class: 'panel' }, h('h2', null, 'Asset Tasks', h('small', { text: String(tasks.filter(function (t) { return !t.done; }).length) })),
+            tasks.length ? tasks.map(function (t, i) {
+              return h('div', { class: 'hchk' }, h('input', { type: 'checkbox', id: 'at_' + i, checked: t.done, 'aria-label': 'Done', onchange: function (e) { save({ tasks: tasks.map(function (x, j) { return j === i ? Object.assign({}, x, { done: e.target.checked }) : x; }) }); } }),
+                h('label', { class: 'grow', for: 'at_' + i }, h('b', { text: t.text, style: t.done ? 'text-decoration:line-through;color:var(--mute)' : null }), t.detail ? h('p', { class: 'hauto', text: t.detail }) : null,
+                  h('small', { text: [t.pillar, t.impact ? t.impact + ' impact' : '', t.at ? 'added ' + day(new Date(t.at).toISOString()) : ''].filter(Boolean).join(' · ') })),
+                h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove task', text: '×', onclick: function () { save({ tasks: tasks.filter(function (x, j) { return j !== i; }) }, 'Task removed'); } }));
+            }) : emptyLine(a.client_id ? 'Client fixes go to their General To-Dos. Use this list for anything that belongs to the asset itself.' : 'No tasks yet.'),
+            h('form', { class: 'toolbar', style: 'margin-top:12px', onsubmit: function (e) { e.preventDefault(); if (!nt.value.trim()) return; save({ tasks: tasks.concat([{ text: nt.value.trim(), done: false, at: Date.now() }]) }, 'Task added'); } },
+              h('div', { class: 'fld', style: 'flex:1;min-width:200px;margin:0' }, nt), h('button', { class: 'pill small', type: 'submit', text: 'Add' }))));
+      }
+
+      // --- report ---
+      function reportText() {
+        var s = HL.scores(a); var v = HL.visibility(a); var pr = HL.priorities(a).slice(0, 5);
+        var wins = HL.checksFor(a.type).filter(function (c) { return HL.statusOf(a, c) === 'pass'; }).sort(function (x, y) { return y.w - x.w; }).slice(0, 5);
+        var L = ['Digital Health Report — ' + a.name + (cl ? ' (' + clientName(cl) + ')' : '')];
+        if (a.url) L.push(a.url);
+        L.push('Prepared by Aethera Digital · ' + day(today()), '', 'Digital Health Score: ' + (s.dhs == null ? '—' : s.dhs) + ' / 100 (' + HL.grade(s.dhs).label + ')',
+          'SEO: ' + (s.seo == null ? '—' : s.seo) + ' · AI search (AISO): ' + (s.aiso == null ? '—' : s.aiso), 'Checks scored: ' + s.scored + ' of ' + s.total);
+        var hist = a.history || [];
+        if (hist.length > 1 && s.dhs != null) { var d0 = hist[0].dhs; L.push('Change since ' + day(new Date(hist[0].date).toISOString()) + ': ' + (s.dhs - d0 >= 0 ? '+' : '') + (s.dhs - d0) + ' points'); }
+        L.push('', 'What’s working'); if (wins.length) wins.forEach(function (c) { L.push('• ' + c.name); }); else L.push('• Not enough checks scored yet');
+        L.push('', 'Top priorities'); if (pr.length) pr.forEach(function (x, i) { L.push((i + 1) + '. ' + x.c.name + ' — ' + x.c.fix); }); else L.push('• No open issues on scored checks');
+        L.push('', 'AI search visibility', v.tested ? 'The brand appears in ' + (v.cited + v.mentioned) + ' of ' + v.tested + ' tracked AI answers (' + v.cited + ' cited with a link, ' + v.mentioned + ' mentioned).' : 'No AI answer prompts tested yet.');
+        return L.join('\n');
+      }
+      function reportTab() {
+        var txt = reportText();
+        return h('div', { class: 'panel' }, h('h2', null, 'Client Report', btn('Copy Report', function () {
+          (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast('Report copied'); }, function () { toast('Select the text and copy it', true); });
+        })), h('p', { class: 'was', text: 'Plain text for an email or the monthly report. Live assets’ scores also appear in the client’s monthly report under Digital Health.' }), h('pre', { class: 'hreport', text: txt }));
+      }
+
+      var tabs = h('nav', { class: 'tabs', 'aria-label': 'Asset sections' }, [['checks', 'Checks'], ['scan', 'Scan'], ['visibility', 'AI Visibility'], ['fixes', 'Fixes'], ['report', 'Report']]
+        .filter(function (t) { return web || t[0] !== 'scan'; }).map(function (t) {
+          return h('a', { href: base + (t[0] === 'checks' ? '' : '/' + t[0]), 'aria-current': tab === t[0] ? 'page' : null }, t[1], t[0] === 'fixes' && HL.priorities(a).length ? h('small', { text: String(HL.priorities(a).length) }) : null);
+        }));
+      render(pageHead(cl ? h('a', { href: '#/clients/' + cl.id + '/health', class: 'eyebrow-link', text: clientName(cl) }) : 'Aethera (Internal)', a.name, [
+        btn('Save Snapshot', snapshot, 'ghost'),
+        btn('Edit', function () { editAsset(a, clients, '', function () { assetView(a.id, tab); }); }, 'ghost'),
+        btn('Delete', function () { if (!confirmDelete(a.name + ' and its scores')) return; desk('DELETE', '/assets/' + a.id).then(function () { toast('Asset deleted'); location.hash = cl ? '#/clients/' + cl.id + '/health' : '#/health'; }).catch(function (x) { toast(x.message, true); }); }, 'ghost')
+      ], ['#/health', 'Digital Health']), heroWrap, tabs, bodyWrap);
+      paint();
+    }).catch(failed);
   }
 
   // Shared with the quotes screens (desk-quotes.js).

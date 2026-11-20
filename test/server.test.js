@@ -29,8 +29,23 @@ const fakeStripe = http.createServer((req, res) => {
   req.on('data', (c) => (body += c));
   req.on('end', () => {
     res.setHeader('Content-Type', 'application/json');
+    if (req.url === '/page' || req.url === '/redir' || req.url === '/robots.txt' || req.url === '/file.pdf') {
+      if (req.url === '/redir') { res.statusCode = 302; res.setHeader('Location', '/page'); return res.end(); }
+      if (req.url === '/robots.txt') { res.setHeader('Content-Type', 'text/plain'); return res.end('User-agent: GPTBot\nDisallow: /\n'); }
+      if (req.url === '/file.pdf') { res.setHeader('Content-Type', 'application/pdf'); return res.end('%PDF'); }
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.end('<!doctype html><html lang="en"><head><title>Roof Repair in Rockwall | Bacon Roofing</title></head><body><h1>Roof repair</h1></body></html>');
+    }
     if (req.url === '/v1/messages') {
       const b = JSON.parse(body); aiCalls.push(b);
+      if (b.tools[0].name === 'record_page_review') {
+        return res.end(JSON.stringify({ content: [{ type: 'tool_use', name: 'record_page_review', input: {
+          summary: 'Solid basics, thin answers.', seo: 'Good title.', aiso: 'No FAQ.',
+          manual_checks: { direct_answer: { status: 'partial', reason: 'Opens with a slogan' }, bogus: { status: 'pass', reason: 'x' } },
+          recommendations: [{ title: 'Add an FAQ', detail: 'Six real questions.', pillar: 'AISO', impact: 'High' }],
+          suggested_title: 'Roof Repair in Rockwall, TX | Bacon Roofing', suggested_meta: 'Leak? We find the source.', faqs: [{ q: 'Do you do free estimates?', a: 'Yes.' }],
+          prompts: ['best roofer in Rockwall'] } }] }));
+      }
       if (b.tools[0].name === 'record_report_commentary') {
         const src = b.messages[0].content;
         return res.end(JSON.stringify({ content: [{ type: 'tool_use', name: 'record_report_commentary', input: {
@@ -336,7 +351,7 @@ function request(port, method, p, body, headers) {
     d = await dj('PATCH', '/tasks/' + tk.id, { done: true, done_at: '2026-10-14' });
     assert.strictEqual(d.body.item.done_at, '2026-10-14');
     d = await dj('GET', '/meta');
-    assert.ok(/^\d{4}-\d{2}$/.test(d.body.report_month) && d.body.metric_groups.length === 4 && d.body.ai === true);
+    assert.ok(/^\d{4}-\d{2}$/.test(d.body.report_month) && d.body.metric_groups.length === 5 && d.body.ai === true);
     const c2 = (await dj('POST', '/clients', { name: 'LTC', company: 'Liberty Tool Company', status: 'active', services: ['Advertising & Funnels'] })).body.item;
     await dj('POST', '/clients', { name: 'Old', status: 'past' });
     d = await dj('POST', '/reports/drafts', { period: '2026-10' });
@@ -520,6 +535,74 @@ function request(port, method, p, body, headers) {
     const s3 = (await dj('POST', '/suggestions', { client_id: cl.id, title: 'Noise', status: 'new' })).body.item;
     d = await dj('PATCH', '/suggestions/' + s3.id, { status: 'dismissed' }); assert.strictEqual(d.body.item.status, 'dismissed');
     ok('suggestions: Add creates a task in General to-dos or a chosen project; Dismiss hides it; can’t add twice');
+
+    // ---------- Digital Health ----------
+    const healthLib = require('../lib/health');
+    ['127.0.0.1', '10.1.2.3', '169.254.169.254', '192.168.1.1', '172.20.0.1', '100.64.0.1', '::1', 'fd00::1', '::ffff:127.0.0.1'].forEach((ip) => assert.ok(healthLib.privateAddress(ip), ip));
+    ['8.8.8.8', '216.24.57.1', '2606:4700::1111'].forEach((ip) => assert.ok(!healthLib.privateAddress(ip), ip));
+    for (const bad of ['http://127.0.0.1:' + stripePort + '/page', 'http://localhost:' + port + '/', 'http://169.254.169.254/latest', 'file:///etc/passwd', 'http://user:pw@example.com/']) {
+      d = await dj('POST', '/health/fetch', { url: bad });
+      assert.strictEqual(d.status, 400, bad); assert.ok(!d.body.html);
+    }
+    let pg = await healthLib.fetchPage('http://127.0.0.1:' + stripePort + '/redir', { allowPrivate: true });
+    assert.strictEqual(pg.url, 'http://127.0.0.1:' + stripePort + '/page'); assert.ok(/Bacon Roofing/.test(pg.html));
+    assert.strictEqual(pg.robots_status, 200); assert.ok(/GPTBot/.test(pg.robots));
+    await assert.rejects(healthLib.fetchPage('http://127.0.0.1:' + stripePort + '/file.pdf', { allowPrivate: true }), /isn’t a web page/);
+    await assert.rejects(healthLib.fetchPage('http://127.0.0.1:' + stripePort + '/page'), /public website/);
+    ok('health fetch: follows redirects, reads robots.txt, refuses private addresses, other schemes and non-HTML');
+
+    const hc = (await dj('POST', '/clients', { name: 'Sam', company: 'Rockwall Roof Co', status: 'active', services: ['SEO & AI Search Visibility'] })).body.item;
+    d = await dj('POST', '/assets', { name: 'Home', type: 'nope', client_id: hc.id }); assert.strictEqual(d.status, 400);
+    d = await dj('POST', '/assets', { name: 'Home', type: 'page', client_id: 'cli_doesnotexist' }); assert.strictEqual(d.status, 400);
+    d = await dj('POST', '/assets', { name: 'Home page', type: 'page', url: 'https://baconroofing.com', client_id: hc.id,
+      checks: { https: { s: 'pass', n: 'ok', evil: '<script>' }, not_a_check: { s: 'pass' }, title: { s: 'maybe' } } });
+    assert.strictEqual(d.status, 200); const as1 = d.body.item;
+    assert.strictEqual(as1.status, 'live'); assert.deepStrictEqual(as1.checks.https, { s: 'pass', n: 'ok' });
+    assert.ok(!as1.checks.not_a_check && as1.checks.title.s === undefined);
+    const internal = (await dj('POST', '/assets', { name: 'aetheradigital.com', type: 'page' })).body.item;
+    assert.strictEqual(internal.client_id, null);
+    d = await dj('GET', '/clients/' + hc.id + '/full'); assert.strictEqual(d.body.assets.length, 1);
+    ok('health assets: validated and cleaned; client optional; listed on the client profile');
+
+    const rpH = (await dj('POST', '/reports', { client_id: hc.id, period: '2026-10', metrics: { seo_score: 12 } })).body.item;
+    const OCT20 = Date.UTC(2026, 9, 20);
+    d = await dj('PATCH', '/assets/' + as1.id, { history: [{ date: OCT20, seo: 80, aiso: 60, dhs: 70 }], score: { seo: 80, aiso: 60, dhs: 70, scored: 20, total: 38 } });
+    assert.strictEqual(d.status, 200);
+    let rp2 = (await dj('GET', '/reports/' + rpH.id)).body.item;
+    assert.strictEqual(rp2.metrics.health_score, 70); assert.strictEqual(rp2.metrics.aiso_score, 60);
+    assert.strictEqual(rp2.metrics.seo_score, 12, 'a number typed by hand is kept'); assert.strictEqual(rp2.sources.health_score, 'health');
+    await dj('POST', '/assets', { name: 'Old preview', type: 'landing', client_id: hc.id, status: 'in_progress', history: [{ date: OCT20, seo: 0, aiso: 0, dhs: 0 }] });
+    rp2 = (await dj('GET', '/reports/' + rpH.id)).body.item; assert.strictEqual(rp2.metrics.health_score, 70, 'only live assets count');
+    await dj('PATCH', '/reports/' + rpH.id, { status: 'sent' });
+    await dj('PATCH', '/assets/' + as1.id, { history: [{ date: OCT20, seo: 80, aiso: 60, dhs: 70 }, { date: OCT20 + 1000, seo: 90, aiso: 90, dhs: 90 }] });
+    rp2 = (await dj('GET', '/reports/' + rpH.id)).body.item; assert.strictEqual(rp2.metrics.health_score, 70, 'sent reports are left alone');
+    ok('health scores flow into draft monthly reports from live assets; typed numbers and sent reports untouched');
+
+    d = await dj('POST', '/assets/' + as1.id + '/fix', { check_id: 'faq' });
+    assert.strictEqual(d.status, 200); assert.strictEqual(d.body.project.name, 'General To-Dos');
+    assert.ok(/FAQ section/.test(d.body.task.title)); assert.strictEqual(d.body.item.checks.faq.task_id, d.body.task.id);
+    d = await dj('POST', '/assets/' + as1.id + '/fix', { title: 'Add an FAQ' }); assert.strictEqual(d.status, 200);
+    d = await dj('POST', '/assets/' + internal.id + '/fix', { check_id: 'faq' }); assert.strictEqual(d.status, 400);
+    d = await dj('POST', '/assets/' + internal.id + '/client', { client_id: hc.id }); assert.strictEqual(d.body.item.client_id, hc.id);
+    d = await dj('POST', '/assets/' + internal.id + '/client', { client_id: null }); assert.strictEqual(d.body.item.client_id, null);
+    assert.strictEqual(d.body.item.name, 'aetheradigital.com', 'unassigning keeps the record');
+    ok('health fixes become General To-Dos; assets can be assigned to or removed from a client');
+
+    d = await dj('POST', '/assets/' + as1.id + '/review'); assert.strictEqual(d.status, 400, 'needs a scan first');
+    await dj('PATCH', '/assets/' + as1.id, { scan: { date: OCT20, title: 'Roof Repair', text: 'We fix roofs in Rockwall.', words: 5, h1: ['Roof repair'] } });
+    d = await dj('POST', '/assets/' + as1.id + '/review'); assert.strictEqual(d.status, 200);
+    const rv = d.body.item.review; assert.strictEqual(rv.manual_checks.direct_answer.status, 'partial'); assert.ok(!rv.manual_checks.bogus);
+    assert.strictEqual(rv.recommendations[0].pillar, 'AISO'); assert.ok(/Rockwall/.test(aiCalls[aiCalls.length - 1].messages[0].content));
+    ok('health review: Claude reads the scanned page and its suggestions are cleaned before saving');
+
+    d = await dj('POST', '/health/import', { assets: [
+      { name: 'Leak repair (preview)', client: 'Rockwall Roof Co', type: 'landing', status: 'In progress', checks: { https: { s: 'pass' } }, history: [{ date: OCT20, seo: 90, aiso: 33, dhs: 62 }] },
+      { name: 'Home page', client: 'rockwall roof co.', type: 'page' },
+      { name: 'Our own home page', client: 'Not A Desk Client', type: 'page', status: 'Live' },
+      { name: 'Broken', client: 'Rockwall Roof Co', type: 'spaceship' }] });
+    assert.strictEqual(d.status, 200); assert.strictEqual(d.body.created, 2); assert.strictEqual(d.body.skipped, 1); assert.strictEqual(d.body.internal, 1); assert.strictEqual(d.body.errors.length, 1);
+    d = await dj('GET', '/assets?client_id=' + hc.id); assert.ok(d.body.items.some((x) => x.name === 'Leak repair (preview)' && x.status === 'in_progress'));
+    ok('health import: matches clients by business name, skips duplicates, brings the rest in as internal assets');
 
     r = await request(port, 'POST', '/api/admin/desk/clients', { name: 'Evil' }, Object.assign({ Origin: 'https://evil.example' }, A));
     assert.strictEqual(r.status, 403);

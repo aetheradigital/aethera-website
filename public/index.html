@@ -26,7 +26,8 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 <title>Aethera Digital — Your Digital Growth Partner</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;0,800;1,300;1,400&amp;family=Nunito+Sans:wght@300;400;600;700&amp;display=swap">
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;0,800;1,300;1,400&amp;family=Nunito+Sans:wght@300;400;600;700&amp;display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;0,800;1,300;1,400&amp;family=Nunito+Sans:wght@300;400;600;700&amp;display=swap"></noscript>
 <style>
 html,body{cursor:default}
 input:not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]),textarea{cursor:text}
@@ -335,7 +336,6 @@ background:linear-gradient(90deg,var(--lav),var(--pink),var(--peach)) no-repeat 
 .ae[data-mode="static"] .card{height:400px}
 .pillars{grid-template-columns:minmax(0,1fr);gap:12px}
 .pillar{padding:20px}
-.pillar p{display:none}
 .jx{grid-template-columns:minmax(0,1fr)}
 .foot{padding:56px 0 32px}
 .foot-row{flex-direction:column;gap:20px}
@@ -363,6 +363,58 @@ background:linear-gradient(90deg,var(--lav),var(--pink),var(--peach)) no-repeat 
 .thanks .btns .pill.ghost:hover{background:#000;color:#fff}
 @media (prefers-reduced-motion:reduce){
 .ae *,.ae *::before,.ae *::after{animation:none !important;transition:none !important}
+}
+
+/* phones + touch: same look, far less GPU memory (iOS kills the tab when blur layers pile up) */
+@keyframes rv-m{from{opacity:0;transform:translateY(80px) scale(.96)}to{opacity:1;transform:none}}
+@keyframes mw-m{from{opacity:.14}to{opacity:1}}
+@keyframes rise-m{from{transform:translateY(70%) rotateX(-70deg);opacity:0}to{transform:none;opacity:1}}
+@media (max-width:860px),(pointer:coarse){
+.orb{filter:none;animation:none;background:radial-gradient(circle,var(--c) 0%,transparent 68%);opacity:.36}
+.jx-ui .glow{filter:none;background:radial-gradient(circle,var(--c) 0%,transparent 70%)}
+.nav-in{backdrop-filter:none;-webkit-backdrop-filter:none;background:rgba(0,0,0,.88)}
+.mark-big{filter:none}
+.mark-big img{animation-name:rise-m}
+.mq-rows{transform:none;transition:none}
+.ae[data-mode="live"] [data-rv]{animation-name:rv-m}
+.ae[data-mode="live"] .mw{animation-name:mw-m}
+}
+
+/* phones: tighter rhythm, no long pinned scroll stages */
+@media (max-width:860px){
+.hero{height:max(620px,100svh);padding-bottom:40px}
+.hero-top{top:96px}
+.mark-big{top:34%}
+.mark-big img{animation-duration:.8s}
+.hero h1 .ln span{animation-duration:.7s}
+.mq{padding:40px 0}
+.mq-row div{font-size:48px}
+.mani{padding:72px 0}
+.mani p{font-size:28px;margin-top:20px}
+/* services: native swipe carousel instead of a 3600px pinned stage */
+.ae[data-mode="live"] .svc{height:auto}
+.ae[data-mode="live"] .svc-stage{position:relative;height:auto;padding-block:64px 56px;gap:28px}
+.ae[data-mode="live"] .track,.ae[data-mode="static"] .track{display:flex;width:auto;max-width:none;margin:0;transform:none;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x mandatory;scroll-padding-inline:20px;gap:14px;padding-inline:20px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.track::-webkit-scrollbar{display:none}
+.ae .card{width:80vw;max-width:360px;height:360px;flex:none;scroll-snap-align:start;padding:26px;border-radius:26px;transform:none}
+.card .num{font-size:96px}
+.card h3{font-size:26px}
+/* brand / growth / systems: show the finished state, no 2800px reveal */
+.ae[data-mode="live"] .portal{height:auto}
+.portal .p-stage{position:relative;height:auto}
+.portal .p-layer[aria-hidden="true"]{display:none}
+.portal .p-disc{position:relative;inset:auto;clip-path:none;padding:72px 20px 56px;gap:32px}
+.portal .p-word{transform:none;font-size:56px}
+.portal .pillars{position:static;width:100%;opacity:1;transform:none}
+.portal .pillar p{font-size:15px}
+.journey{padding:64px 0 72px}
+.jx{gap:32px}
+.jx-step{gap:20px;padding:22px;border-radius:24px}
+.jx-ui{min-height:0;padding:18px}
+.engage{padding-block:88px 64px}
+.pkg,.faq{padding-bottom:72px}
+.cta{padding-block:56px 72px}
+.faq summary{padding:22px 0}
 }
 </style>
 </head>
@@ -411,7 +463,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <img class="star" src="/assets/icon.png" alt="">
 </div>
 
-<div class="mark-big" aria-hidden="true"><img src="/assets/wordmark.png" alt=""></div>
+<div class="mark-big" aria-hidden="true"><img src="/assets/wordmark.png" alt="" width="1600" height="539" fetchpriority="high"></div>
 
 <div class="wrap">
 <div class="hero-row">
@@ -675,7 +727,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <a href="/pay/">Pay an Invoice</a>
 </nav>
 </div>
-<div class="foot-mark" aria-hidden="true"><img src="/assets/wordmark.png" alt=""></div>
+<div class="foot-mark" aria-hidden="true"><img src="/assets/wordmark.png" alt="" width="1600" height="539" loading="lazy" decoding="async"></div>
 <div class="foot-base"><span>© 2026 Aethera Digital</span><span>aetheradigital.com</span><span>Your Digital Growth Partner</span></div>
 </div>
 </footer>
@@ -707,11 +759,22 @@ class Component extends DCLogic {
     const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
     const q = (s) => r.querySelector(s);
     const qa = (s) => Array.prototype.slice.call(r.querySelectorAll(s));
-    const set = (k, v) => r.style.setProperty(k, v);
+    // Phones/touch: only write a CSS variable when its value changes, so an idle page
+    // stops restyling every frame (desktop behaviour is unchanged).
+    const lite = window.matchMedia ? window.matchMedia('(max-width:860px), (pointer:coarse)') : null;
+    const isLite = () => !!(lite && lite.matches);
+    const phoneMq = window.matchMedia ? window.matchMedia('(max-width:860px)') : null;
+    const last = {};
+    const set = (k, v) => {
+      if (isLite() && last[k] === v) return;
+      last[k] = v;
+      r.style.setProperty(k, v);
+    };
     const m = { x: innerWidth / 2, y: innerHeight / 2, tx: innerWidth / 2, ty: innerHeight / 2 };
     let lastY = 0, skew = 0, nav = 0;
 
     const onMove = (e) => {
+      if (e.pointerType === 'touch' && isLite()) return;
       m.tx = e.clientX; m.ty = e.clientY;
       r.setAttribute('data-seen', '1');
       const t = e.target && e.target.closest ? e.target.closest('a,button,label,input,textarea,select') : null;
@@ -761,7 +824,8 @@ class Component extends DCLogic {
       const mode = live ? 'live' : 'static';
       if (r.getAttribute('data-mode') !== mode) r.setAttribute('data-mode', mode);
 
-      const ring = q('[data-ae-ring]');
+      const lt = isLite();
+      const ring = lt ? null : q('[data-ae-ring]');
       m.x += (m.tx - m.x) * 0.2; m.y += (m.ty - m.y) * 0.2;
       if (ring) ring.style.transform = 'translate3d(' + m.x.toFixed(1) + 'px,' + m.y.toFixed(1) + 'px,0)';
 
@@ -777,14 +841,22 @@ class Component extends DCLogic {
       set('--pg', clamp(sy / total, 0, 1).toFixed(4));
 
       prog('hero', (b) => set('--ph', clamp(-b.top / b.height, 0, 1).toFixed(4)));
-      prog('services', (b) => {
+      const phone = !!(phoneMq && phoneMq.matches);
+      if (phone) {
+        // phones: services is a swipe carousel and the portal shows its finished state
+        const tr = q('[data-ae-track]');
+        const max = tr ? tr.scrollWidth - tr.clientWidth : 0;
+        set('--ps', (max > 0 ? clamp(tr.scrollLeft / max, 0, 1) : 0).toFixed(4));
+        set('--hx', '0px');
+        set('--pp', '1');
+      } else prog('services', (b) => {
         const st = q('[data-ae-stage]'), tr = q('[data-ae-track]');
         const sh = st ? st.clientHeight : vh;
         const p = clamp(-b.top / Math.max(1, b.height - sh), 0, 1);
         set('--ps', p.toFixed(4));
         if (st && tr) set('--hx', (-Math.max(0, tr.offsetWidth - st.clientWidth) * p).toFixed(1) + 'px');
       });
-      prog('portal', (b) => {
+      if (!phone) prog('portal', (b) => {
         const st = q('[data-ae-pstage]');
         const sh = st ? st.clientHeight : vh;
         set('--pp', clamp(-b.top / Math.max(1, b.height - sh), 0, 1).toFixed(4));
@@ -800,7 +872,7 @@ class Component extends DCLogic {
       prog('footer', (b) => set('--pf', clamp((vh - b.top) / b.height, 0, 1).toFixed(4)));
 
       const v = sy - lastY; lastY = sy;
-      skew += (clamp(v * 0.22, -9, 9) - skew) * 0.1;
+      skew = lt ? 0 : skew + (clamp(v * 0.22, -9, 9) - skew) * 0.1;
       set('--skew', skew.toFixed(2) + 'deg');
       if (v > 3 && sy > 240) nav = 1; else if (v < -3 || sy < 120) nav = 0;
       set('--nav', String(nav));

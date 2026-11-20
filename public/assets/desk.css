@@ -282,6 +282,67 @@ small.was{color:var(--mute);font-size:13px}
 .dl dd small.was{display:block;margin-top:2px}
 p.was{color:var(--mute)}
 
+/* ---------- Digital Health ---------- */
+.st.h-good{color:var(--sage);background:rgba(207,232,180,.12)}
+.st.h-ok{color:var(--sky);background:rgba(175,203,255,.12)}
+.st.h-warn{color:#F6E7A1;background:rgba(246,231,161,.12)}
+.st.h-bad{color:var(--err);background:rgba(255,179,179,.12)}
+.st.h-none{color:var(--mute)}
+.st.h-aiso{color:var(--lav);background:rgba(200,182,255,.12)}
+.ring text{fill:#fff;font-family:"Raleway",sans-serif;font-weight:300;font-variant-numeric:tabular-nums}
+.hcell{display:flex;align-items:center;gap:10px;flex-wrap:nowrap}
+.hnum{width:28px;font-variant-numeric:tabular-nums}
+.hbar{flex:1;min-width:60px;height:6px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}
+.hbar i{display:block;height:100%;border-radius:999px}
+.hbar.seo i{background:var(--sky)}
+.hbar.aiso i{background:var(--lav)}
+.hhero{display:grid;grid-template-columns:auto minmax(0,1fr);gap:32px;align-items:center;margin-bottom:22px}
+.hrings{display:flex;gap:22px;align-items:center;flex-wrap:wrap}
+.hlabel{text-align:center;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);font-weight:600;margin-top:6px}
+.hmeta p{margin:10px 0 0}
+.hmeta a{color:#fff}
+.spark{display:block;width:100%;max-width:420px;margin-top:12px}
+.spark text{fill:var(--mute);font-size:10px}
+.hpillar{font-size:24px;font-weight:300;margin:26px 0 12px;display:flex;align-items:center;gap:12px}
+.hpillar:first-child{margin-top:0}
+.hcat{margin-bottom:14px}
+.hcat > h2 .hcell{width:160px}
+.hcat > h2 small{font-family:"Avenir Next","Nunito Sans",sans-serif;font-size:13px;color:var(--mute);font-weight:600}
+.hchk{display:flex;gap:14px;align-items:flex-start;padding:14px 0;border-top:1px solid var(--line)}
+.hchk .grow{flex:1;min-width:0}
+.hchk b{display:block;font-weight:600}
+.hchk small{display:block;color:var(--mute);font-size:12px;margin-top:2px}
+.hstripe{flex:none;width:4px;align-self:stretch;border-radius:4px;background:rgba(255,255,255,.1)}
+.hstripe.pass{background:var(--sage)}
+.hstripe.partial{background:#F6E7A1}
+.hstripe.fail{background:var(--err)}
+.hstripe.na{background:rgba(255,255,255,.2)}
+.hauto{margin:6px 0 0;color:#C9C9D1;font-size:14px}
+.hauto b{display:inline;color:#fff}
+.hnote{margin-top:6px;width:100%;background:transparent;border:1px solid transparent;border-radius:10px;color:#fff;font:inherit;font-size:13px;padding:6px 10px 6px 0}
+.hnote:hover{border-color:var(--line);padding-left:10px}
+.hnote:focus{outline:none;background:var(--field);border-color:var(--lav);padding-left:10px}
+.hnote::placeholder{color:#5E5E68}
+.hctrl{flex:none}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.seg button{background:transparent;border:0;border-right:1px solid var(--line);color:var(--mute);font:inherit;font-size:12px;font-weight:600;padding:7px 11px;cursor:pointer}
+.seg button:last-child{border-right:0}
+.seg button:hover{color:#fff}
+.seg button[aria-pressed="true"].pass{background:rgba(207,232,180,.18);color:var(--sage)}
+.seg button[aria-pressed="true"].partial{background:rgba(246,231,161,.18);color:#F6E7A1}
+.seg button[aria-pressed="true"].fail{background:rgba(255,179,179,.18);color:var(--err)}
+.seg button[aria-pressed="true"].na{background:rgba(255,255,255,.12);color:#fff}
+.hpaste{margin-top:6px}
+.hpaste summary{cursor:pointer;color:var(--mute);font-weight:600;font-size:14px;padding:6px 0}
+.hpaste[open] summary{margin-bottom:10px}
+textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.hsub{font-family:"Avenir Next","Nunito Sans",sans-serif;font-size:15px;font-weight:700;margin:20px 0 4px;display:flex;align-items:center;gap:12px}
+.hlist{margin:6px 0 0;padding-left:18px;color:#C9C9D1}
+.hreport{white-space:pre-wrap;font-family:inherit;font-size:14px;line-height:1.6;background:#121217;border:1px solid var(--line);border-radius:14px;padding:18px;margin:0;color:#E6E6EA}
+.eyebrow-link{color:var(--mute);text-decoration:none}
+.eyebrow-link:hover{color:#fff}
+@media (max-width:860px){.hhero{grid-template-columns:minmax(0,1fr)}.hchk{flex-wrap:wrap}.hctrl{width:100%;padding-left:18px}}
+.tbl select{background:var(--field);color:#fff;border:1px solid var(--line);border-radius:10px;padding:7px 9px;font:inherit;font-size:13px}
 /* ---------- quotes ---------- */
 .st.q-draft{color:#D6D6DC}
 .st.q-sent{color:var(--sky);background:rgba(175,203,255,.12)}
