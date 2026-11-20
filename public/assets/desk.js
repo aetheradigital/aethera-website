@@ -1257,7 +1257,7 @@
           h('div', { class: 'hmeta' },
             h('div', null, gpill(s.dhs), ' ', h('span', { class: 'st ' + (a.status === 'live' ? 'active' : 'planned'), text: ASSET_STATUS_LABEL[a.status] || '' })),
             h('p', null, [HL.TYPES[a.type], a.url ? h('a', { href: a.url, target: '_blank', rel: 'noopener', text: a.url.replace(/^https?:\/\//, '') }) : null].filter(Boolean).reduce(function (acc, x, i) { if (i) acc.push(' · '); acc.push(x); return acc; }, [])),
-            h('p', { class: 'was', text: s.scored + ' of ' + s.total + ' checks scored' + (v.tested ? ' · in ' + (v.cited + v.mentioned) + ' of ' + v.tested + ' AI answers' : '') + (a.scan && a.scan.date ? ' · scanned ' + day(new Date(a.scan.date).toISOString()) : '') }),
+            h('p', { class: 'was', text: s.scored + ' of ' + s.total + ' checks verified' + (s.total - s.scored ? ' (' + (s.total - s.scored) + ' unverified count as 0)' : '') + (v.tested ? ' · in ' + (v.cited + v.mentioned) + ' of ' + v.tested + ' AI answers' : '') + (a.scan && a.scan.date ? ' · scanned ' + day(new Date(a.scan.date).toISOString()) : '') }),
             spark(a.history)));
       }
       function paint() {

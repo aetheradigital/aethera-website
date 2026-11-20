@@ -60,7 +60,8 @@ Add `aetheradigital.com`, `www.aetheradigital.com` and `admin.aetheradigital.com
 ## Digital Health (SEO + AI search)
 
 **Digital Health** in the Desk scores each page or profile ("asset") for SEO and AI search (AISO) and blends them 50/50
-into a Digital Health Score. Checks, weights and the page analyzer live in `public/assets/health.js`; server-side
+into a Digital Health Score. A pass earns a check's full weight and a partial half; a fail or a check nobody has verified yet
+earns nothing, and only N/A checks are left out, so scores rise as things are confirmed. Checks, weights and the page analyzer live in `public/assets/health.js`; server-side
 cleaning, page fetching, Claude review and report numbers in `lib/health.js`.
 
 1. **New Asset** (on Digital Health or a client's **Health** tab): name, client (or Aethera internal), type, URL, status.

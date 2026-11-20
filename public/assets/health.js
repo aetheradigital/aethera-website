@@ -104,10 +104,12 @@ function visibility(a){
 }
 function statusOf(a,c){ return c.derived ? visibility(a).status : ((a.checks||{})[c.id]||{}).s || ""; }
 const VAL = {pass:1,partial:0.5,fail:0};
+// Every applicable check counts: pass = full weight, partial = half, fail or not yet checked = 0. Only N/A is
+// left out. A set with nothing checked yet has no score.
 function scoreSet(a,list){
-  let tot=0,got=0;
-  list.forEach(c=>{const s=statusOf(a,c); if(s in VAL){tot+=c.w;got+=c.w*VAL[s];}});
-  return tot? Math.round(got/tot*100) : null;
+  let tot=0,got=0,any=false;
+  list.forEach(c=>{const s=statusOf(a,c); if(s==="na") return; tot+=c.w; if(s in VAL){got+=c.w*VAL[s]; any=true;}});
+  return (any&&tot)? Math.round(got/tot*100) : null;
 }
 // Digital Health Score = SEO and AISO blended (default 50/50).
 function scores(a, seoWeight){
