@@ -130,10 +130,17 @@
       parts.push(previewPanel(q, t));
       parts.push(h('div', { class: 'grid g2', style: 'margin-top:18px' }, trailPanel(q),
         h('div', { class: 'panel' }, h('h2', null, 'Housekeeping'),
-          h('p', { class: 'was', text: q.status === 'accepted' ? 'Signed quotes are kept as a record. To change the work, duplicate this quote and send the new version.' : 'Editing a sent quote updates what the client sees at the same link.' }),
+          h('p', { class: 'was', text: q.status === 'accepted' ? 'Signed quotes are kept as a record. To change the work, duplicate this quote and send the new version. Delete Signed Quote is for tests and mistakes: it voids unpaid invoices from this quote first.' : 'Editing a sent quote updates what the client sees at the same link.' }),
           h('div', { class: 'toolbar', style: 'margin:12px 0 0' },
             ['sent', 'viewed'].indexOf(q.status) >= 0 ? btn('Withdraw Quote', function () { if (!confirm('Withdraw ' + q.number + '? The client’s link will stop working.')) return; desk('POST', '/quotes/' + q.id + '/void').then(function () { toast('Quote withdrawn'); reload(); }).catch(function (x) { toast(x.message, true); }); }, 'ghost') : null,
-            q.status !== 'accepted' ? btn('Delete Quote', function () { if (!D.confirmDelete('quote ' + q.number)) return; desk('DELETE', '/quotes/' + q.id).then(function () { toast('Quote deleted'); location.hash = '#/quotes'; }).catch(function (x) { toast(x.message, true); }); }, 'ghost') : null))));
+            q.status !== 'accepted' ? btn('Delete Quote', function () { if (!D.confirmDelete('quote ' + q.number)) return; desk('DELETE', '/quotes/' + q.id).then(function () { toast('Quote deleted'); location.hash = '#/quotes'; }).catch(function (x) { toast(x.message, true); }); }, 'ghost') : null,
+            q.status === 'accepted' ? btn('Delete Signed Quote', function (e) {
+              var typed = window.prompt('This voids the unpaid invoices this quote created in Stripe, stops its monthly billing, deletes the signed PDF and removes the quote. It can’t be undone (the activity log keeps a record).\n\nType ' + q.number + ' to confirm:');
+              if (typed === null) return;
+              e.target.disabled = true;
+              desk('POST', '/quotes/' + q.id + '/delete-signed', { confirm: typed.trim() }).then(function (r) { toast('Quote deleted' + (r.done.length ? ': ' + r.done.join(', ') : '')); location.hash = '#/quotes'; })
+                .catch(function (x) { e.target.disabled = false; toast(x.message, true); });
+            }, 'ghost') : null))));
 
       D.render(D.pageHead(h('span', null, (c.company || c.name || '') + ' · ' + q.number + ' ', qbadge(st)), [q.title], acts, ['#/quotes', 'All Quotes']), parts);
     }).catch(D.failed);

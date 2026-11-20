@@ -1222,6 +1222,47 @@ async function quotesApi(req, res, p, m, url) {
       await desk.remove('quote', q.id); return json(res, 200, { ok: true });
     }
     if (m !== 'POST') return json(res, 405, { error: 'Method not allowed' });
+    // Removing a signed quote (for tests and mistakes): voids the open invoices it created, stops its monthly billing,
+    // deletes its signed PDF, then the quote. Refused if anything was paid. The audit log keeps a record.
+    if (action === 'delete-signed') {
+      if (q.status !== 'accepted') return json(res, 409, { error: 'Only signed quotes use this. Delete other quotes normally.' });
+      const body = (await readJson(req, 1024)) || {};
+      if (clip(body.confirm, 40).toUpperCase() !== String(q.number || '').toUpperCase()) return json(res, 400, { error: 'Type the quote number exactly to confirm.' });
+      const done = [];
+      const invoices = (q.billing || []).filter(function (b) { return b.invoice_id; });
+      if (invoices.length || (q.monthly_billing && (q.monthly_billing.schedule_id || q.monthly_billing.subscription_id))) {
+        if (!SECRET) return json(res, 503, { error: 'Stripe isn’t set up on the server, so its invoices can’t be voided.' });
+      }
+      const fetched = [];
+      for (const b of invoices) {
+        try { fetched.push(await stripe('GET', '/v1/invoices/' + encodeURIComponent(b.invoice_id))); }
+        catch (e) { if (e.status !== 404) return json(res, 502, { error: 'Couldn’t check invoice ' + (b.invoice_number || b.invoice_id) + ' in Stripe. Nothing was deleted.' }); }
+      }
+      const paid = fetched.filter(function (inv) { return inv.status === 'paid' || inv.amount_paid > 0; });
+      if (paid.length) return json(res, 409, { error: 'Invoice ' + (paid[0].number || paid[0].id) + ' from this quote has been paid. Refund it in Stripe first, then void it, and try again. Nothing was deleted.' });
+      try {
+        for (const inv of fetched) {
+          if (inv.status === 'open') { await stripe('POST', '/v1/invoices/' + inv.id + '/void'); done.push('voided ' + (inv.number || inv.id)); }
+          else if (inv.status === 'draft') { await stripe('DELETE', '/v1/invoices/' + inv.id); done.push('deleted draft invoice'); }
+        }
+        const mb = q.monthly_billing || {};
+        if (mb.schedule_id) {
+          try { await stripe('POST', '/v1/subscription_schedules/' + mb.schedule_id + '/cancel'); done.push('canceled monthly billing'); }
+          catch (e) { if (!/released|canceled|completed/i.test(e.message)) throw e; }
+        }
+        if (mb.subscription_id) {
+          try { await stripe('DELETE', '/v1/subscriptions/' + mb.subscription_id); if (done.indexOf('canceled monthly billing') < 0) done.push('canceled monthly billing'); }
+          catch (e) { if (e.status !== 404 && !/canceled/i.test(e.message)) throw e; }
+        }
+      } catch (e) {
+        console.error('quote_delete_signed_stripe_failed', q.id, e.message);
+        return json(res, 502, { error: 'Stripe: ' + e.message + ' The quote was kept; check its invoices in Stripe and try again.' });
+      }
+      if (q.signed_file_id) { const f = await desk.getFileMeta(q.signed_file_id); if (f) { await deleteStoredFile(f); done.push('deleted signed PDF'); } }
+      await desk.remove('quote', q.id);
+      await adminAudit(req, q.client_id, 'quote', 'Signed quote deleted', (q.number || '') + ' · ' + (q.title || '') + (done.length ? ' · ' + done.join(', ') : ''));
+      return json(res, 200, { ok: true, done: done });
+    }
     if (action === 'send') {
       if (['draft', 'sent', 'viewed'].indexOf(q.status) < 0) return json(res, 409, { error: 'Only draft or open quotes can be sent.' });
       const t = quotesLib.totals(q, (q.items || []).filter(function (it) { return it.optional; }).map(function (it) { return it.id; }));
