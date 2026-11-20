@@ -34,6 +34,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 
 const PORT = Number(process.env.PORT) || 10000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -1377,7 +1378,13 @@ function serveStatic(req, res, url) {
       const ext = path.extname(file).toLowerCase();
       const cache = ext === '.html' ? 'no-cache' : 'public, max-age=86400';
       if (ext === '.html') data = versionAssets(data);
-      send(res, 200, req.method === 'HEAD' ? '' : data, { 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': cache });
+      const headers = { 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': cache, 'Vary': 'Accept-Encoding' };
+      // Compress text files (the home page is ~75 KB raw, ~15 KB gzipped).
+      if (req.method !== 'HEAD' && /\.(html|css|js|json|svg|txt|xml)$/.test(ext) && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) {
+        headers['Content-Encoding'] = 'gzip';
+        data = zlib.gzipSync(data);
+      }
+      send(res, 200, req.method === 'HEAD' ? '' : data, headers);
     });
   });
 }

@@ -26,7 +26,8 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 <title>Aethera Digital — Your Digital Growth Partner</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;0,800;1,300;1,400&amp;family=Nunito+Sans:wght@300;400;600;700&amp;display=swap">
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;0,800;1,300;1,400&amp;family=Nunito+Sans:wght@300;400;600;700&amp;display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;0,800;1,300;1,400&amp;family=Nunito+Sans:wght@300;400;600;700&amp;display=swap"></noscript>
 <style>
 html,body{cursor:default}
 input:not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]),textarea{cursor:text}
@@ -379,6 +380,42 @@ background:linear-gradient(90deg,var(--lav),var(--pink),var(--peach)) no-repeat 
 .ae[data-mode="live"] [data-rv]{animation-name:rv-m}
 .ae[data-mode="live"] .mw{animation-name:mw-m}
 }
+
+/* phones: tighter rhythm, no long pinned scroll stages */
+@media (max-width:860px){
+.hero{height:max(620px,100svh);padding-bottom:40px}
+.hero-top{top:96px}
+.mark-big{top:34%}
+.mark-big img{animation-duration:.8s}
+.hero h1 .ln span{animation-duration:.7s}
+.mq{padding:40px 0}
+.mq-row div{font-size:48px}
+.mani{padding:72px 0}
+.mani p{font-size:28px;margin-top:20px}
+/* services: native swipe carousel instead of a 3600px pinned stage */
+.ae[data-mode="live"] .svc{height:auto}
+.ae[data-mode="live"] .svc-stage{position:relative;height:auto;padding-block:64px 56px;gap:28px}
+.ae[data-mode="live"] .track,.ae[data-mode="static"] .track{display:flex;width:auto;max-width:none;margin:0;transform:none;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x mandatory;scroll-padding-inline:20px;gap:14px;padding-inline:20px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.track::-webkit-scrollbar{display:none}
+.ae .card{width:80vw;max-width:360px;height:360px;flex:none;scroll-snap-align:start;padding:26px;border-radius:26px;transform:none}
+.card .num{font-size:96px}
+.card h3{font-size:26px}
+/* brand / growth / systems: show the finished state, no 2800px reveal */
+.ae[data-mode="live"] .portal{height:auto}
+.portal .p-stage{position:relative;height:auto}
+.portal .p-layer[aria-hidden="true"]{display:none}
+.portal .p-disc{position:relative;inset:auto;clip-path:none;padding:72px 20px 56px;gap:32px}
+.portal .p-word{transform:none;font-size:56px}
+.portal .pillars{position:static;width:100%;opacity:1;transform:none}
+.journey{padding:64px 0 72px}
+.jx{gap:32px}
+.jx-step{gap:20px;padding:22px;border-radius:24px}
+.jx-ui{min-height:0;padding:18px}
+.engage{padding-block:88px 64px}
+.pkg,.faq{padding-bottom:72px}
+.cta{padding-block:56px 72px}
+.faq summary{padding:22px 0}
+}
 </style>
 </head>
 <body>
@@ -426,7 +463,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <img class="star" src="/assets/icon.png" alt="">
 </div>
 
-<div class="mark-big" aria-hidden="true"><img src="/assets/wordmark.png" alt=""></div>
+<div class="mark-big" aria-hidden="true"><img src="/assets/wordmark.png" alt="" width="1600" height="539" fetchpriority="high"></div>
 
 <div class="wrap">
 <div class="hero-row">
@@ -690,7 +727,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <a href="/pay/">Pay an Invoice</a>
 </nav>
 </div>
-<div class="foot-mark" aria-hidden="true"><img src="/assets/wordmark.png" alt=""></div>
+<div class="foot-mark" aria-hidden="true"><img src="/assets/wordmark.png" alt="" width="1600" height="539" loading="lazy" decoding="async"></div>
 <div class="foot-base"><span>© 2026 Aethera Digital</span><span>aetheradigital.com</span><span>Your Digital Growth Partner</span></div>
 </div>
 </footer>
@@ -726,6 +763,7 @@ class Component extends DCLogic {
     // stops restyling every frame (desktop behaviour is unchanged).
     const lite = window.matchMedia ? window.matchMedia('(max-width:860px), (pointer:coarse)') : null;
     const isLite = () => !!(lite && lite.matches);
+    const phoneMq = window.matchMedia ? window.matchMedia('(max-width:860px)') : null;
     const last = {};
     const set = (k, v) => {
       if (isLite() && last[k] === v) return;
@@ -803,14 +841,22 @@ class Component extends DCLogic {
       set('--pg', clamp(sy / total, 0, 1).toFixed(4));
 
       prog('hero', (b) => set('--ph', clamp(-b.top / b.height, 0, 1).toFixed(4)));
-      prog('services', (b) => {
+      const phone = !!(phoneMq && phoneMq.matches);
+      if (phone) {
+        // phones: services is a swipe carousel and the portal shows its finished state
+        const tr = q('[data-ae-track]');
+        const max = tr ? tr.scrollWidth - tr.clientWidth : 0;
+        set('--ps', (max > 0 ? clamp(tr.scrollLeft / max, 0, 1) : 0).toFixed(4));
+        set('--hx', '0px');
+        set('--pp', '1');
+      } else prog('services', (b) => {
         const st = q('[data-ae-stage]'), tr = q('[data-ae-track]');
         const sh = st ? st.clientHeight : vh;
         const p = clamp(-b.top / Math.max(1, b.height - sh), 0, 1);
         set('--ps', p.toFixed(4));
         if (st && tr) set('--hx', (-Math.max(0, tr.offsetWidth - st.clientWidth) * p).toFixed(1) + 'px');
       });
-      prog('portal', (b) => {
+      if (!phone) prog('portal', (b) => {
         const st = q('[data-ae-pstage]');
         const sh = st ? st.clientHeight : vh;
         set('--pp', clamp(-b.top / Math.max(1, b.height - sh), 0, 1).toFixed(4));
