@@ -1024,6 +1024,37 @@ function request(port, method, p, body, headers) {
       assert.strictEqual(r.status, 302); assert.ok(/\/quote\/\?t=[A-Za-z0-9_-]{24,}$/.test(r.headers.location));
       ok('portal quotes: sent quotes appear for the client and open the review & sign page; drafts stay hidden');
 
+      // Signing a test quote, then deleting it from the Desk.
+      const qtok = new URL(r.headers.location, 'https://x').searchParams.get('t');
+      const pub = JSON.parse((await request(port, 'GET', '/api/quote?t=' + qtok)).body).quote;
+      const png = 'data:image/png;base64,' + Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(400, 1)]).toString('base64');
+      r = await request(port, 'POST', '/api/quote/accept', { t: qtok, name: 'Test Signer', email: 'signer@example.com', signature: png, agree_terms: true, agree_esign: true,
+        selected: [], terms_version: pub.terms.version, total_seen: pub.totals.total, monthly_seen: pub.totals.monthly });
+      assert.strictEqual(r.status, 200, r.body);
+      r = await request(port, 'GET', '/api/admin/desk/quotes/' + pq.id, null, A);
+      const signedQ = JSON.parse(r.body).item;
+      assert.strictEqual(signedQ.status, 'accepted');
+      r = await request(port, 'DELETE', '/api/admin/desk/quotes/' + pq.id, null, A);
+      assert.strictEqual(r.status, 409, 'plain delete still refuses signed quotes');
+      r = await request(port, 'POST', '/api/admin/desk/quotes/' + pq.id + '/delete-signed', { confirm: 'wrong' }, A);
+      assert.strictEqual(r.status, 400);
+      invoiceStatus = 'paid';
+      r = await request(port, 'POST', '/api/admin/desk/quotes/' + pq.id + '/delete-signed', { confirm: signedQ.number }, A);
+      invoiceStatus = 'open';
+      assert.strictEqual(r.status, 409, 'paid invoices block deletion');
+      const voidsBefore = calls.filter((x) => /\/void$/.test(x.path)).length;
+      r = await request(port, 'POST', '/api/admin/desk/quotes/' + pq.id + '/delete-signed', { confirm: signedQ.number.toLowerCase() }, A);
+      assert.strictEqual(r.status, 200, r.body);
+      assert.ok(JSON.parse(r.body).done.some((d) => /^voided/.test(d)));
+      assert.strictEqual(calls.filter((x) => /\/void$/.test(x.path)).length, voidsBefore + 1);
+      r = await request(port, 'GET', '/api/admin/desk/quotes/' + pq.id, null, A);
+      assert.strictEqual(r.status, 404);
+      r = await request(port, 'GET', '/api/portal/data', null, sa.cookie);
+      j = JSON.parse(r.body);
+      assert.strictEqual(j.quotes.length, 0); assert.ok(!j.files.some((f) => / signed\.pdf$/.test(f.name)), 'signed PDF removed');
+      assert.ok(j.activity.some((e) => e.event === 'Signed quote deleted'));
+      ok('quotes: a signed test quote can be deleted from the Desk (typed confirmation; unpaid invoices voided; refused if paid)');
+
       // The second client signs in on its own and sees none of the first client's data.
       const sb = await signIn(EMAIL_B);
       r = await request(port, 'GET', '/api/portal/data', null, sb.cookie);
