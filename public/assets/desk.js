@@ -97,6 +97,7 @@
       input = h('input', { id: id, name: f.name, type: f.type || 'text', value: v === undefined || v === null ? '' : v, placeholder: f.placeholder || '', inputmode: f.inputmode || null, required: f.required || null, autocomplete: 'off' });
     }
     wrap.appendChild(input);
+    if (f.help) wrap.appendChild(h('small', { class: 'was', text: f.help }));
     return wrap;
   }
   function modal(opts) {
@@ -149,6 +150,34 @@
         if (!d.name) throw new Error('Enter a contact name.');
         return (c ? desk('PATCH', '/clients/' + c.id, d) : desk('POST', '/clients', d)).then(function (r) { toast(c ? 'Client saved' : 'Client created'); then(r.item); });
       } });
+  }
+  // ---------- reporting connections ----------
+  var SRC = { gsc: 'Search Console', ga4: 'Google Analytics' };
+  function editConnections(c, then) {
+    modal({ title: 'Reporting Connections', submit: 'Save Connections', values: c, fields: [
+      { name: 'gsc_site', label: 'Search Console Site', placeholder: 'e.g. aetheradigital.com',
+        help: 'The property exactly as Search Console lists it. A plain domain like baconroofing.com is saved as a Domain property (sc-domain:).' },
+      { name: 'ga4_property', label: 'GA4 Property ID', inputmode: 'numeric', placeholder: 'e.g. 412345678',
+        help: 'The number in GA4 under Admin › Property details (not the G- measurement ID).' }
+    ], onSubmit: function (d) {
+      return desk('PATCH', '/clients/' + c.id, d).then(function (r) { toast('Connections saved'); then(r.item); });
+    } });
+  }
+  function connectionsPanel(c, reload) {
+    var sync = c.report_sync || {};
+    function row(key, value) {
+      var st = sync[key];
+      var line = !value ? 'Not connected' : !st ? 'Waiting for the first pull (the reporting script checks daily)'
+        : (st.ok ? 'Last pulled ' : 'Problem on ') + day(new Date(st.at).toLocaleDateString('en-CA')) + ' for ' + monthName(st.period) + ' · ' + st.message;
+      return [h('dt', { text: SRC[key] }), h('dd', null, h('div', { text: value || '—' }),
+        h('small', { class: 'was' + (st && !st.ok ? ' bad' : ''), text: line }))];
+    }
+    return h('div', { class: 'panel', style: 'margin-top:18px' },
+      h('div', { class: 'hrow' }, h('h2', null, 'Reporting Connections'),
+        btn(c.gsc_site || c.ga4_property ? 'Edit Connections' : 'Connect Google', function () { editConnections(c, reload); }, 'ghost')),
+      h('p', { class: 'was', style: 'margin:-4px 0 14px', text: 'Numbers from these accounts fill in this client’s monthly report automatically. Anything typed by hand is never overwritten.' }),
+      h('dl', { class: 'dl' }, row('gsc', c.gsc_site), row('ga4', c.ga4_property)),
+      !META.collector ? h('p', { class: 'was bad', style: 'margin-top:12px', text: 'The reporting script isn’t set up yet: DESK_COLLECTOR_TOKEN is missing on the server.' }) : null);
   }
   function editProject(p, clientId, then) {
     var fields = [
@@ -429,6 +458,7 @@
           c.next_date ? h('p', { class: (c.next_date < today() ? 'st overdue' : 'st open'), style: 'margin:0 0 18px', text: (c.next_date < today() ? 'Overdue · ' : '') + day(c.next_date) }) : null,
           h('h2', { style: 'margin-top:18px' }, 'Notes'),
           c.notes ? h('p', { class: 'notes', text: c.notes }) : emptyLine('No notes yet.'))),
+      connectionsPanel(c, reload),
       h('div', { class: 'no-print', style: 'margin-top:24px' }, h('button', { class: 'pill small ghost', type: 'button', text: 'Delete Client', onclick: function () {
         if (!confirmDelete((c.company || c.name) + ' and all of its projects, files, approvals and reports (Stripe invoices are not affected)')) return;
         desk('DELETE', '/clients/' + c.id).then(function () { toast('Client deleted'); location.hash = '#/clients'; }).catch(function (x) { toast(x.message, true); });
@@ -790,6 +820,8 @@
           btn('Delete', function () { if (!confirmDelete('this report')) return; desk('DELETE', '/reports/' + rp.id).then(function () { toast('Report deleted'); location.hash = '#/clients/' + c.id + '/reports'; }); }, 'ghost')], ['#/reports?month=' + rp.period, 'All Reports']),
           keys.length ? h('div', { class: 'kpis' }, keys.map(function (k) { return kpi(k, history, prev); }), cpl !== null ? h('div', { class: 'kpi' }, h('div', { class: 'k', text: 'Cost per Lead' }), h('div', { class: 'v', text: usd(cpl) }), h('div', { class: 'd', text: 'Ad spend ÷ leads' })) : null)
             : h('div', { class: 'panel' }, emptyLine('No numbers yet. Click Edit to add this month’s metrics.')),
+          (function () { var used = {}; Object.keys(rp.sources || {}).forEach(function (k) { if (m[k] !== undefined) used[SRC[rp.sources[k]]] = 1; }); var u = Object.keys(used);
+            return u.length ? h('p', { class: 'was no-print', style: 'margin:10px 0 0', text: 'Pulled automatically from ' + u.join(' and ') + '.' }) : null; })(),
           h('div', { class: 'grid g3 prose', style: 'margin-top:18px' },
             h('div', { class: 'panel' }, h('h3', { text: 'What Happened' }), h('p', { text: rp.summary || '—' })),
             h('div', { class: 'panel' }, h('h3', { text: 'Wins' }), h('p', { text: rp.wins || '—' })),
@@ -845,7 +877,7 @@
         sections.appendChild(h('div', { class: 'panel', style: 'margin-bottom:16px' }, h('h2', null, g.label), h('div', { class: 'metrics-form' }, g.metrics.map(function (k) {
           return h('div', { class: 'fld' }, h('label', { for: 'm_' + k, text: METRIC[k][0] + (METRIC[k][1] === '$' ? ' ($)' : '') }),
             h('input', { id: 'm_' + k, name: k, inputmode: 'decimal', value: m[k] !== undefined ? m[k] : '', placeholder: '—' }),
-            h('small', { class: 'was', text: pm[k] !== undefined ? 'Last month: ' + mfmt(k, pm[k]) : prev ? 'Not tracked last month' : 'First report' }));
+            h('small', { class: 'was', text: ((rp.sources || {})[k] && m[k] !== undefined ? 'From ' + SRC[rp.sources[k]] + ' · ' : '') + (pm[k] !== undefined ? 'Last month: ' + mfmt(k, pm[k]) : prev ? 'Not tracked last month' : 'First report') }));
         }))));
       });
     }

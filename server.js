@@ -651,7 +651,7 @@ async function deskApi(req, res, url) {
   if (p === '/meta' && m === 'GET') {
     const templates = {}; Object.keys(deskLib.TEMPLATES).forEach(function (k) { templates[k] = { label: deskLib.TEMPLATES[k].label, count: deskLib.TEMPLATES[k].tasks.length }; });
     return json(res, 200, { store: desk.kind, templates: templates, services: deskLib.SERVICES, client_status: deskLib.CLIENT_STATUS, project_status: deskLib.PROJECT_STATUS, approval_status: deskLib.APPROVAL_STATUS, approval_kind: deskLib.APPROVAL_KIND, file_category: deskLib.FILE_CATEGORY, metrics: deskLib.METRICS,
-      metric_groups: deskLib.METRIC_GROUPS, report_status: deskLib.REPORT_STATUS, report_month: deskLib.lastFullMonth(), ai: Boolean(ANTHROPIC_KEY) });
+      metric_groups: deskLib.METRIC_GROUPS, collector: Boolean(COLLECTOR_TOKEN), report_status: deskLib.REPORT_STATUS, report_month: deskLib.lastFullMonth(), ai: Boolean(ANTHROPIC_KEY) });
   }
   if (p === '/overview' && m === 'GET') return deskOverview(req, res);
 
@@ -739,7 +739,10 @@ async function deskApi(req, res, url) {
     const v = deskLib.validate(type, body, false);
     if (v.error) return json(res, 400, { error: v.error });
     const links = {};
-    if (type === 'client') { v.data.status = v.data.status || 'lead'; }
+    if (type === 'client') {
+      v.data.status = v.data.status || 'lead';
+      const bad = reportingLib.normalizeConnections(v.data); if (bad) return json(res, 400, { error: bad });
+    }
     else if (type === 'lead') { v.data.status = v.data.status || 'new'; }
     else if (deskLib.SCHEMA[type].parent === 'client') {
       if (!(await desk.get('client', v.data.client_id))) return json(res, 400, { error: 'Client not found.' });
@@ -773,6 +776,12 @@ async function deskApi(req, res, url) {
     if (type === 'task' && 'done' in v.data && !('done_at' in v.data)) v.data.done_at = v.data.done ? deskLib.localDate() : null;
     if (type === 'report' && v.data.status === 'sent' && !v.data.sent_at) v.data.sent_at = deskLib.localDate();
     if (type === 'report' && v.data.status && v.data.status !== 'sent' && !('sent_at' in v.data)) v.data.sent_at = null;
+    if (type === 'client') { const bad = reportingLib.normalizeConnections(v.data); if (bad) return json(res, 400, { error: bad }); }
+    // A number changed by hand is no longer marked as pulled from Google, so the next pull leaves it alone.
+    if (type === 'report' && v.data.metrics) {
+      const before = await desk.get('report', id);
+      if (before && before.sources) v.data.sources = reportingLib.sourcesAfterEdit(before, v.data.metrics);
+    }
     const item = await desk.update(type, id, v.data);
     return item ? json(res, 200, { item: item }) : json(res, 404, { error: 'Not found.' });
   }
@@ -784,6 +793,7 @@ async function deskApi(req, res, url) {
 // A draft report for every active client, once per month. A draft that was deleted on purpose isn't recreated
 // by the schedule (each client/month is remembered), but "Create Drafts" on the Reports page (force) brings it back.
 const reportsLib = require('./lib/reports');
+const reportingLib = require('./lib/reporting');
 async function ensureReportDrafts(period, force) {
   const clients = (await desk.allOf('client')).filter(function (c) { return c.status === 'active'; });
   const reports = await desk.allOf('report');
@@ -945,6 +955,13 @@ async function collectorApi(req, res, url) {
   if (p === '/api/collector/clients' && req.method === 'GET') {
     return json(res, 200, { clients: collectorLib.collectorClients(await desk.allOf('client')), ai: Boolean(ANTHROPIC_KEY) });
   }
+  // Reporting Apps Script: which clients to pull for, and the numbers it pulled.
+  if (p === '/api/collector/reporting' && req.method === 'GET') {
+    const q = url.searchParams.get('period');
+    const period = /^\d{4}-(0[1-9]|1[0-2])$/.test(q || '') ? q : deskLib.lastFullMonth();
+    return json(res, 200, { period: period, clients: reportingLib.reportingClients(await desk.allOf('client')) });
+  }
+  if (p === '/api/collector/metrics' && req.method === 'POST') return receiveMetrics(req, res);
   if (p === '/api/collector/items' && req.method === 'POST') {
     if (!ANTHROPIC_KEY) return json(res, 503, { error: 'ANTHROPIC_API_KEY is not set on the server.' });
     const body = await readJson(req, 2 * 1024 * 1024);
@@ -968,6 +985,38 @@ async function collectorApi(req, res, url) {
     return json(res, 200, { ok: true, queued: queued, skipped: skipped });
   }
   return json(res, 404, { error: 'Not found' });
+}
+
+// One client's numbers from one source for one month. Errors are recorded too, so the client page can say
+// what's wrong (e.g. no access to the property). Reviewed (ready/sent) reports are never changed.
+async function receiveMetrics(req, res) {
+  const body = await readJson(req, 16384);
+  if (!body || !reportingLib.SOURCES[body.source] || !/^\d{4}-(0[1-9]|1[0-2])$/.test(String(body.period || ''))) return json(res, 400, { error: 'Invalid request.' });
+  const client = await desk.get('client', String(body.client_id || ''));
+  if (!client) return json(res, 404, { error: 'Client not found.' });
+  const source = body.source; const period = body.period;
+  const sync = Object.assign({}, client.report_sync || {});
+  const record = async function (ok, message) {
+    sync[source] = { at: new Date().toISOString(), period: period, ok: ok, message: clip(message, 300) };
+    await desk.update('client', client.id, { report_sync: sync });
+  };
+  if (body.error) {
+    await record(false, body.error);
+    console.warn('reporting_pull_failed ' + JSON.stringify({ client: client.id, source: source, error: clip(body.error, 200) }));
+    return json(res, 200, { ok: true, recorded: 'error' });
+  }
+  const v = deskLib.validate('report', { metrics: body.metrics || {} }, true);
+  if (v.error) { await record(false, v.error); return json(res, 400, { error: v.error }); }
+  let report = (await desk.list('report', { client_id: client.id })).find(function (r) { return r.period === period; });
+  if (report && report.status && report.status !== 'draft') {
+    await record(true, 'Report already marked ' + (report.status === 'sent' ? 'sent' : 'ready') + '; numbers left as they are.');
+    return json(res, 200, { ok: true, written: [], kept: [], reviewed: true });
+  }
+  if (!report) report = await desk.create('report', { client_id: client.id, period: period, metrics: {}, status: 'draft', created_by: 'auto' }, { client_id: client.id });
+  const merged = reportingLib.mergeMetrics(report, source, v.data.metrics);
+  if (merged.written.length) await desk.update('report', report.id, { metrics: merged.metrics, sources: merged.sources });
+  await record(true, merged.written.length + ' number' + (merged.written.length === 1 ? '' : 's') + ' updated' + (merged.kept.length ? ', ' + merged.kept.length + ' kept as entered by hand' : ''));
+  return json(res, 200, { ok: true, report_id: report.id, written: merged.written, kept: merged.kept });
 }
 
 async function acceptSuggestion(req, res, id) {
