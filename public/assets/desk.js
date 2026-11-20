@@ -885,7 +885,7 @@
       h('div', { class: 'pr-bg' }),
       h('div', { class: 'pr-foot' }, h('span', { text: 'Aethera Digital · aetheradigital.com' }), h('span', { text: cname + ' · ' + monthName(rp.period) })),
       h('header', { class: 'pr-head' },
-        h('img', { src: '/assets/wordmark-full.png', alt: 'Aethera Digital' }),
+        h('img', { src: '/assets/wordmark.png', alt: 'Aethera Digital' }),
         h('div', { class: 'pr-meta' }, h('span', { text: 'Monthly Performance Report' }), h('b', { text: monthName(rp.period) }))),
       h('section', { class: 'pr-title' },
         h('p', { class: 'pr-eyebrow', text: 'Prepared for' }),
