@@ -107,7 +107,7 @@ the client can tick, and monthly lines are billed every month.
    to the client's Files (Contract).
 
 Terms of Service are versioned under Quotes → Terms of Service. Saving creates a new version; signed quotes keep theirs.
-The starting text is a template. Have an attorney review it.
+Version 1 (the starting text) has been reviewed and approved by Aethera's attorney. Have later changes reviewed the same way.
 
 Apps Script: quote emails use the `quote_email` handler in `forms/apps-script.gs`. Paste the updated script and deploy a
 **new version** of the web app, or quote emails will fail. For monthly invoices from quotes to use the Aethera email instead of

@@ -410,7 +410,7 @@
       var note = h('input', { maxlength: 200, placeholder: 'What changed (for your records)', 'aria-label': 'What changed' });
       var err = h('p', { class: 'err', role: 'alert', hidden: true });
       D.render(D.pageHead('Quotes', 'Terms of Service', null, ['#/quotes', 'All Quotes']),
-        h('p', { class: 'banner', text: 'Every quote shows the current version, and each signature records the version that was signed. Saving creates a new version; quotes already signed keep theirs. This starting text is a template, not legal advice. Have an attorney review it before relying on it.' }),
+        h('p', { class: 'banner', text: 'Every quote shows the current version, and each signature records the version that was signed. Saving creates a new version; quotes already signed keep theirs.' }),
         h('div', { class: 'grid', style: 'grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:18px;align-items:start' },
           h('div', { class: 'panel' }, h('h2', null, 'Version ' + cur.version, h('small', { text: 'Since ' + day(cur.created_at) })), ta,
             h('div', { class: 'fld', style: 'margin-top:12px' }, note), err,
