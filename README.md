@@ -9,6 +9,7 @@ Aethera Digital's website plus a native, embedded Stripe checkout.
 - `public/admin/` + `public/assets/desk.js|css` - the **Aethera Desk** at admin.aetheradigital.com: overview, clients & prospects,
   projects with checklists, files, approvals, monthly client reports with charts, and invoicing (create, email, resend, void, mark paid)
 - `lib/pg.js` - dependency-free Postgres client; `lib/desk.js` - Desk record schema, checklists and storage
+- `lib/quote-pdf.js` + `lib/pdf.js` - the branded signed-quote PDF (dependency-free PDF writer): downloaded from the Desk, the quote page and the portal, emailed to the signer, and filed to the client's Files
 - `public/assets/pay.js`, `pay.css` - shared Payment Element styling and helpers
 - `server.js` - zero-dependency Node server: serves `public/` and a small Stripe API
   - `GET /api/config` - publishable key, test mode, portal URL

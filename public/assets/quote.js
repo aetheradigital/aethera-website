@@ -153,7 +153,7 @@
       closed('✓', '#CFE8B4', 'Signed. <em>Thank you.</em>', 'Signed by ' + q.acceptance.name + ' on ' + stamp(q.acceptance.at) + '. A signed copy was emailed to ' + q.acceptance.email + '.' +
         (first.length ? ' Your ' + first[0].label.toLowerCase() + ' invoice is ready.' : ''));
       first.forEach(function (b, i) { add(acts, h('a', { class: 'pill' + (i ? ' ghost' : ''), href: b.pay_url, text: 'Pay ' + b.label + ' · ' + money(b.amount) })); });
-      add(acts, h('button', { class: 'pill ghost', type: 'button', text: 'Print or Save as PDF', onclick: function () { window.print(); } }));
+      add(acts, h('a', { class: 'pill ghost', href: '/api/quote/pdf?t=' + encodeURIComponent(token), download: '', text: 'Download Signed PDF' }));
       return;
     }
     if (q.state === 'declined') return closed('×', '#FFB3B3', 'Quote <em>declined.</em>', 'Thanks for letting us know. If anything changes, reply to the quote email or write to hello@aetheradigital.com.');
