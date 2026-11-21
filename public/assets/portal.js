@@ -85,6 +85,7 @@
   var STATUS_LABEL = { planned: 'Planned', in_progress: 'In progress', review: 'In review', done: 'Done', on_hold: 'On hold', pending: 'Awaiting you', approved: 'Approved', changes: 'Changes requested', declined: 'Declined',
     open: 'Open', overdue: 'Overdue', paid: 'Paid', void: 'Void', uncollectible: 'Uncollectible',
     sent: 'Ready to sign', viewed: 'Ready to sign', accepted: 'Signed', expired: 'Expired' };
+  var PRIVACY_URL = 'https://aetheradigital.com/privacy/';
   function badge(s) { return h('span', { class: 'badge ' + s, text: STATUS_LABEL[s] || s }); }
 
   // ---------- sign in ----------
@@ -93,7 +94,7 @@
     app.appendChild(h('div', { class: 'auth' },
       h('img', { class: 'logo', src: WORDMARK, alt: 'æthera' }),
       h('div', { class: 'mid' }, h('section', { class: 'card' }, card)),
-      h('p', { class: 'note' }, 'Need help? ', h('a', { href: 'mailto:hello@aetheradigital.com', text: 'hello@aetheradigital.com' }))));
+      h('p', { class: 'note' }, 'Need help? ', h('a', { href: 'mailto:hello@aetheradigital.com', text: 'hello@aetheradigital.com' }), ' · ', h('a', { href: PRIVACY_URL, text: 'Privacy Policy' }))));
   }
   function showLogin(message, email) {
     document.title = 'Sign In — Aethera Client Portal';
@@ -177,7 +178,7 @@
       h('div', { class: 'who' }, h('span', { class: 'avatar', 'aria-hidden': 'true', text: initials(d.client.name) }), h('span', { class: 'name', text: d.client.name }),
         h('button', { class: 'pill ghost small', type: 'button', text: 'Sign out', onclick: signOut }))));
     var view = { overview: overview, reports: reports, projects: projects, files: files, quotes: quotes, billing: billing, activity: activity }[tab]();
-    var foot = h('footer', { class: 'foot' }, h('p', null, '© ' + new Date().getFullYear() + ' Aethera Digital · Questions? ', h('a', { href: 'mailto:hello@aetheradigital.com', text: 'hello@aetheradigital.com' })),
+    var foot = h('footer', { class: 'foot' }, h('p', null, '© ' + new Date().getFullYear() + ' Aethera Digital · Questions? ', h('a', { href: 'mailto:hello@aetheradigital.com', text: 'hello@aetheradigital.com' }), ' · ', h('a', { href: PRIVACY_URL, text: 'Privacy Policy' })),
       S.billing && S.billing.test_mode ? h('span', { class: 'testbar', text: 'Test mode · no real charges' }) : null);
     var y = window.scrollY;
     app.innerHTML = '';
