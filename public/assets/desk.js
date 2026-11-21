@@ -581,18 +581,40 @@
       var clients = {}; r[2].items.forEach(function (c) { clients[c.id] = c; });
       var cols = ['planned', 'in_progress', 'review', 'on_hold', 'done'];
       var board = h('div', { class: 'board' });
+      var F = { client: '', owner: '', hideDone: false, general: false };
+      try { Object.assign(F, JSON.parse(localStorage.getItem('desk.board') || '{}')); } catch (e) {}
+      if (F.client && !clients[F.client]) F.client = '';
+      function keep() { try { localStorage.setItem('desk.board', JSON.stringify(F)); } catch (e) {} }
+      function isGeneral(p) { return String(p.name || '').trim().toLowerCase() === 'general to-dos'; }
+      var withProjects = {}; r[0].items.forEach(function (p) { withProjects[p.client_id] = true; });
+      var owners = {}; r[0].items.forEach(function (p) { if (p.owner) owners[p.owner] = true; });
+      function pick(key, label, opts) {
+        var el = h('select', { class: 'search', style: 'max-width:230px;border-radius:12px', 'aria-label': label }, [h('option', { value: '', text: label })].concat(opts.map(function (o) { return h('option', { value: o[0], text: o[1], selected: F[key] === o[0] ? 'selected' : null }); })));
+        el.addEventListener('change', function () { F[key] = el.value; keep(); paint(); }); return el;
+      }
+      function toggle(key, label) {
+        var el = h('button', { class: 'chip', type: 'button', 'aria-pressed': String(Boolean(F[key])), text: label, onclick: function () { F[key] = !F[key]; el.setAttribute('aria-pressed', String(F[key])); keep(); paint(); } });
+        return el;
+      }
+      var shown = h('small', { class: 'was' });
+      var filters = h('div', { class: 'toolbar' },
+        pick('client', 'All Clients', r[2].items.filter(function (c) { return withProjects[c.id]; }).sort(function (a, b) { return (a.company || a.name).localeCompare(b.company || b.name); }).map(function (c) { return [c.id, c.company || c.name]; })),
+        pick('owner', 'All Owners', Object.keys(owners).sort().map(function (o) { return [o, o]; })),
+        toggle('hideDone', 'Hide Done'), toggle('general', 'Show General To-Dos'), shown);
       render(pageHead('Work', 'Projects', [btn('New Project', function () {
         if (!r[2].items.length) { toast('Add a client first', true); return; }
         modal({ title: 'New Project', submit: 'Next', fields: [{ name: 'client_id', label: 'Client', type: 'select', options: r[2].items.map(function (c) { return [c.id, c.company || c.name]; }) }], onSubmit: function (v) {
           setTimeout(function () { editProject(null, v.client_id, function (p) { location.hash = '#/projects/' + p.id; }); }, 0);
         } });
       })]),
-      board);
+      filters, board);
       paint();
       function paint() {
         board.innerHTML = '';
-        cols.forEach(function (s) {
-          var ps = r[0].items.filter(function (p) { return (p.status || 'planned') === s; }).sort(function (a, b) { return (a.due || '9') < (b.due || '9') ? -1 : 1; });
+        var visible = r[0].items.filter(function (p) { return (!F.client || p.client_id === F.client) && (!F.owner || p.owner === F.owner) && (F.general || !isGeneral(p)) && !(F.hideDone && p.status === 'done'); });
+        shown.textContent = visible.length === r[0].items.length ? '' : visible.length + ' of ' + r[0].items.length + ' projects';
+        cols.filter(function (s) { return !(F.hideDone && s === 'done'); }).forEach(function (s) {
+          var ps = visible.filter(function (p) { return (p.status || 'planned') === s; }).sort(function (a, b) { return (a.due || '9') < (b.due || '9') ? -1 : 1; });
           board.appendChild(h('section', { class: 'col', 'data-status': s, 'aria-label': lab(s) }, h('h3', null, lab(s), h('span', { text: String(ps.length) })),
             ps.length ? ps.map(function (p) {
               var pr = progress(r[1].items.filter(function (t) { return t.project_id === p.id; }));
@@ -669,33 +691,111 @@
     loading();
     desk('GET', '/projects/' + id).then(function (pr) {
       var p = pr.item;
-      return Promise.all([desk('GET', '/tasks?project_id=' + p.id), desk('GET', '/clients/' + p.client_id)]).then(function (r) {
+      return Promise.all([desk('GET', '/tasks?project_id=' + p.id), desk('GET', '/clients/' + p.client_id), desk('GET', '/projects?client_id=' + p.client_id)]).then(function (r) {
         var tasks = r[0].items.sort(function (a, b) { return (a.position || 0) - (b.position || 0) || (a.created_at < b.created_at ? -1 : 1); });
         var c = r[1].item;
+        var others = r[2].items.filter(function (x) { return x.id !== p.id; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
         var reload = function () { projectView(p.id); };
-        var ul = h('ul', { class: 'list' });
+        var SRC = { health: 'Digital Health', email: 'Email', meeting: 'Meeting', calendar: 'Calendar' };
+        var selecting = false, selected = {};
         var bar = h('i'); var count = h('small');
-        function updateProgress() { var g = progress(tasks); bar.style.width = g.pct + '%'; count.textContent = g.d + ' of ' + g.t + ' done'; }
-        tasks.forEach(function (t) {
-          var li = h('li', { class: t.done ? 'done' : '' },
+        var openUl = h('ul', { class: 'list tasks' }), doneUl = h('ul', { class: 'list tasks' });
+        var doneBox = h('details', { class: 'donebox' }), doneSum = h('summary');
+        var tools = h('div', { class: 'toolbar tasktools' });
+        var empty = emptyLine('No tasks yet. Add one below or start from a checklist.');
+        function chosen() { return tasks.filter(function (t) { return selected[t.id]; }).map(function (t) { return t.id; }); }
+        function bulk(action, extra) {
+          return desk('POST', '/tasks/bulk', Object.assign({ ids: chosen(), action: action }, extra || {}));
+        }
+        function moveDialog(ids, label) {
+          if (!others.length) { toast('This client has no other projects yet. Create one first.', true); return; }
+          modal({ title: 'Move ' + label, submit: 'Move', fields: [{ name: 'project_id', label: 'Move To', type: 'select', options: others.map(function (x) { return [x.id, x.name + (x.status === 'done' ? ' (Done)' : '')]; }) }],
+            onSubmit: function (v) {
+              return desk('POST', '/tasks/bulk', { ids: ids, action: 'move', project_id: v.project_id }).then(function (x) {
+                toast(x.moved + (x.moved === 1 ? ' task' : ' tasks') + ' moved to ' + x.project.name); reload();
+              });
+            } });
+        }
+        function row(t) {
+          var overdue = !t.done && t.due && t.due < today();
+          var meta = [];
+          if (t.owner) meta.push(h('span', { text: t.owner }));
+          if (t.due) meta.push(h('span', { class: overdue ? 'bad' : '', text: (overdue ? 'Overdue · ' : 'Due ') + day(t.due) }));
+          if (SRC[t.source]) meta.push(h('span', { class: 'src ' + t.source, text: SRC[t.source] }));
+          var li = h('li', { class: (t.done ? 'done' : '') + (selected[t.id] ? ' picked' : ''), 'data-id': t.id },
+            selecting ? h('input', { type: 'checkbox', class: 'sel', checked: Boolean(selected[t.id]), 'aria-label': 'Select “' + t.title + '”', onchange: function (e) { selected[t.id] = e.target.checked; paint(); } })
+              : (t.done ? null : h('button', { class: 'grip', type: 'button', 'aria-label': 'Drag to reorder “' + t.title + '”', title: 'Drag to reorder', text: '⋮⋮' })),
             h('input', { type: 'checkbox', class: 'chk', checked: t.done, 'aria-label': 'Mark “' + t.title + '” done', onchange: function (e) {
-              t.done = e.target.checked; li.classList.toggle('done', t.done); updateProgress();
+              t.done = e.target.checked; paint();
               desk('PATCH', '/tasks/' + t.id, { done: t.done }).catch(function (x) { toast(x.message, true); });
             } }),
-            h('span', { class: 'grow' }, h('span', { class: 't', text: t.title }), (t.owner || t.due) ? h('span', { class: 'm', text: [t.owner, t.due ? 'Due ' + day(t.due) : ''].filter(Boolean).join(' · ') }) : null),
-            h('div', { class: 'rowacts' },
+            h('span', { class: 'grow' }, h('span', { class: 't', text: t.title }), meta.length ? h('span', { class: 'm' }, meta) : null),
+            selecting ? null : h('div', { class: 'rowacts' },
+              h('button', { type: 'button', text: 'Move', onclick: function () { moveDialog([t.id], 'Task'); } }),
               h('button', { type: 'button', text: 'Edit', onclick: function () {
                 modal({ title: 'Edit Task', fields: [{ name: 'title', label: 'Task' }, { name: 'owner', label: 'Owner', half: true }, { name: 'due', label: 'Due', type: 'date', half: true }], values: t, onSubmit: function (v) {
                   if (!v.title) throw new Error('Enter a task.'); return desk('PATCH', '/tasks/' + t.id, v).then(reload);
                 } });
               } }),
               h('button', { class: 'danger', type: 'button', text: 'Delete', 'aria-label': 'Delete Task', onclick: function () { desk('DELETE', '/tasks/' + t.id).then(reload); } })));
-          ul.appendChild(li);
-        });
+          var grip = li.querySelector('.grip'); if (grip) dragRow(grip, li);
+          return li;
+        }
+        // Drag a task by its handle to reorder the open tasks.
+        function dragRow(grip, li) {
+          grip.addEventListener('pointerdown', function (e) {
+            if (e.button !== 0) return; e.preventDefault();
+            li.classList.add('dragging'); document.body.classList.add('dragging');
+            function onMove(ev) {
+              var rows = Array.prototype.slice.call(openUl.children);
+              for (var i = 0; i < rows.length; i++) {
+                if (rows[i] === li) continue;
+                var b = rows[i].getBoundingClientRect();
+                if (ev.clientY > b.top && ev.clientY < b.bottom) { openUl.insertBefore(li, ev.clientY < b.top + b.height / 2 ? rows[i] : rows[i].nextSibling); break; }
+              }
+            }
+            function onUp() {
+              document.removeEventListener('pointermove', onMove); document.removeEventListener('pointerup', onUp); document.removeEventListener('pointercancel', onUp);
+              li.classList.remove('dragging'); document.body.classList.remove('dragging');
+              var ids = Array.prototype.map.call(openUl.children, function (x) { return x.getAttribute('data-id'); });
+              var before = tasks.filter(function (t) { return !t.done; }).map(function (t) { return t.id; }).join();
+              if (ids.join() === before) return;
+              var byId = {}; tasks.forEach(function (t) { byId[t.id] = t; });
+              var done = tasks.filter(function (t) { return t.done; });
+              tasks = ids.map(function (x) { return byId[x]; }).concat(done); tasks.forEach(function (t, i) { t.position = i; });
+              desk('POST', '/projects/' + p.id + '/order', { ids: tasks.map(function (t) { return t.id; }) }).catch(function (x) { toast(x.message, true); });
+            }
+            document.addEventListener('pointermove', onMove); document.addEventListener('pointerup', onUp); document.addEventListener('pointercancel', onUp);
+          });
+        }
+        function paint() {
+          var g = progress(tasks); bar.style.width = g.pct + '%'; count.textContent = g.d + ' of ' + g.t + ' done';
+          var open = tasks.filter(function (t) { return !t.done; }), done = tasks.filter(function (t) { return t.done; });
+          openUl.innerHTML = ''; doneUl.innerHTML = '';
+          open.forEach(function (t) { openUl.appendChild(row(t)); });
+          done.forEach(function (t) { doneUl.appendChild(row(t)); });
+          empty.hidden = tasks.length > 0;
+          openUl.hidden = !open.length;
+          doneBox.hidden = !done.length; doneSum.textContent = 'Completed (' + done.length + ')';
+          if (tasks.length && !open.length) doneBox.open = true;
+          tools.innerHTML = ''; tools.hidden = !tasks.length;
+          var n = chosen().length;
+          if (!selecting) add(tools, btn('Select Tasks', function () { selecting = true; paint(); }, 'ghost'));
+          else add(tools, [
+            h('span', { class: 'was', text: n ? n + ' selected' : 'Tick the tasks to change' }),
+            btn('Select All', function () { var all = tasks.every(function (t) { return selected[t.id]; }); tasks.forEach(function (t) { selected[t.id] = !all; }); paint(); }, 'ghost'),
+            btn('Move To…', function () { if (!n) return toast('Select at least one task', true); moveDialog(chosen(), n + (n === 1 ? ' Task' : ' Tasks')); }, 'ghost'),
+            btn('Mark Done', function () { if (!n) return toast('Select at least one task', true); bulk('done').then(function () { toast(n + ' marked done'); reload(); }).catch(function (x) { toast(x.message, true); }); }, 'ghost'),
+            btn('Reopen', function () { if (!n) return toast('Select at least one task', true); bulk('reopen').then(function () { toast(n + ' reopened'); reload(); }).catch(function (x) { toast(x.message, true); }); }, 'ghost'),
+            btn('Delete', function () { if (!n) return toast('Select at least one task', true); if (!confirmDelete(n + (n === 1 ? ' task' : ' tasks'))) return; bulk('delete').then(function () { toast(n + ' deleted'); reload(); }).catch(function (x) { toast(x.message, true); }); }, 'ghost'),
+            btn('Cancel', function () { selecting = false; selected = {}; paint(); }, 'ghost')]);
+        }
+        add(doneBox, [doneSum, doneUl]);
         var addIn = h('input', { class: 'search', style: 'max-width:none', placeholder: 'Add a task and press Enter', 'aria-label': 'New task' });
         var addForm = h('form', { class: 'toolbar', style: 'margin:14px 0 0', onsubmit: function (e) {
           e.preventDefault(); var v = addIn.value.trim(); if (!v) return;
-          desk('POST', '/tasks', { project_id: p.id, title: v, position: tasks.length }).then(reload).catch(function (x) { toast(x.message, true); });
+          var next = tasks.reduce(function (m, t) { return Math.max(m, Number(t.position) || 0); }, -1) + 1;
+          desk('POST', '/tasks', { project_id: p.id, title: v, position: next }).then(reload).catch(function (x) { toast(x.message, true); });
         } }, addIn, h('button', { class: 'pill small', type: 'submit', text: 'Add' }));
         var tplSel = h('select', { class: 'search', style: 'max-width:260px;border-radius:12px', 'aria-label': 'Checklist' }, [h('option', { value: '', text: 'Add a Checklist…' })].concat(Object.keys(META.templates).map(function (k) { return h('option', { value: k, text: META.templates[k].label }); })));
         tplSel.addEventListener('change', function () { if (!tplSel.value) return; desk('POST', '/projects/' + p.id + '/checklist', { template: tplSel.value }).then(function (x) { toast(x.tasks.length + ' tasks added'); reload(); }); });
@@ -705,11 +805,11 @@
           if (!confirmDelete('this project and its tasks')) return; desk('DELETE', '/projects/' + p.id).then(function () { toast('Project deleted'); location.hash = '#/clients/' + p.client_id + '/projects'; });
         }, 'ghost')], ['#/clients/' + p.client_id + '/projects', c.company || c.name]),
           h('div', { class: 'grid g2', style: 'grid-template-columns:minmax(0,2fr) minmax(0,1fr)' },
-            h('div', { class: 'panel' }, h('h2', null, 'Checklist', count), h('div', { class: 'bar', style: 'margin:0 0 10px' }, bar), tasks.length ? ul : emptyLine('No tasks yet. Add one below or start from a checklist.'), addForm, h('div', { style: 'margin-top:12px' }, tplSel)),
+            h('div', { class: 'panel' }, h('h2', null, 'Tasks', count), h('div', { class: 'bar', style: 'margin:0 0 12px' }, bar), tools, empty, openUl, doneBox, addForm, h('div', { style: 'margin-top:12px' }, tplSel)),
             h('div', { class: 'panel' }, h('h2', null, 'Details'), h('dl', { class: 'dl', style: 'grid-template-columns:90px 1fr' },
               h('dt', { text: 'Owner' }), h('dd', { text: p.owner || '—' }), h('dt', { text: 'Start' }), h('dd', { text: day(p.start) }), h('dt', { text: 'Due' }), h('dd', { text: day(p.due) })),
               p.description ? h('p', { class: 'notes', style: 'margin-top:16px', text: p.description }) : null)));
-        updateProgress();
+        paint();
       });
     }).catch(failed);
   }
@@ -1385,7 +1485,7 @@
         }
         return h('div', { class: 'panel', style: 'margin-top:18px' }, parts);
       }
-      // Client assets: a to-do in the client's General To-Dos. Internal assets keep their own task list.
+      // Client assets: a to-do in the client's SEO project. Internal assets keep their own task list.
       function addTodo(serverBody, localTask, b) {
         if (b) b.disabled = true;
         if (a.client_id) return desk('POST', '/assets/' + a.id + '/fix', serverBody).then(function (r) { a = r.item; toast('Added to ' + r.project.name); paint(); }).catch(function (x) { if (b) b.disabled = false; toast(x.message, true); });
@@ -1426,14 +1526,14 @@
                 h('div', { class: 'grow' }, h('b', { text: x.c.name }), h('small', { text: (x.c.pillar === 'seo' ? 'SEO' : 'AISO') + ' · ' + HL.impactOf(x.c.w) + ' impact' }), h('p', { class: 'hauto', text: x.c.fix })),
                 rec.task_id ? h('span', { class: 'st done', text: 'Added' }) : a.client_id ? btn('Add to To-Dos', function (e) { addTodo({ check_id: x.c.id }, null, e.target); }, 'ghost') : null);
             }) : emptyLine('Nothing failing. Score more checks to surface priorities.'),
-            !a.client_id && pr.length ? h('p', { class: 'was', text: 'Assign this asset to a client to send fixes to their General To-Dos.' }) : null),
+            !a.client_id && pr.length ? h('p', { class: 'was', text: 'Assign this asset to a client to send fixes to their SEO project.' }) : null),
           h('div', { class: 'panel' }, h('h2', null, 'Asset Tasks', h('small', { text: String(tasks.filter(function (t) { return !t.done; }).length) })),
             tasks.length ? tasks.map(function (t, i) {
               return h('div', { class: 'hchk' }, h('input', { type: 'checkbox', id: 'at_' + i, checked: t.done, 'aria-label': 'Done', onchange: function (e) { save({ tasks: tasks.map(function (x, j) { return j === i ? Object.assign({}, x, { done: e.target.checked }) : x; }) }); } }),
                 h('label', { class: 'grow', for: 'at_' + i }, h('b', { text: t.text, style: t.done ? 'text-decoration:line-through;color:var(--mute)' : null }), t.detail ? h('p', { class: 'hauto', text: t.detail }) : null,
                   h('small', { text: [t.pillar, t.impact ? t.impact + ' impact' : '', t.at ? 'added ' + day(new Date(t.at).toISOString()) : ''].filter(Boolean).join(' · ') })),
                 h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove task', text: '×', onclick: function () { save({ tasks: tasks.filter(function (x, j) { return j !== i; }) }, 'Task removed'); } }));
-            }) : emptyLine(a.client_id ? 'Client fixes go to their General To-Dos. Use this list for anything that belongs to the asset itself.' : 'No tasks yet.'),
+            }) : emptyLine(a.client_id ? 'Client fixes go to their SEO project. Use this list for anything that belongs to the asset itself.' : 'No tasks yet.'),
             h('form', { class: 'toolbar', style: 'margin-top:12px', onsubmit: function (e) { e.preventDefault(); if (!nt.value.trim()) return; save({ tasks: tasks.concat([{ text: nt.value.trim(), done: false, at: Date.now() }]) }, 'Task added'); } },
               h('div', { class: 'fld', style: 'flex:1;min-width:200px;margin:0' }, nt), h('button', { class: 'pill small', type: 'submit', text: 'Add' }))));
       }

@@ -592,9 +592,33 @@ function request(port, method, p, body, headers) {
     ok('health scores flow into draft monthly reports from live assets; typed numbers and sent reports untouched');
 
     d = await dj('POST', '/assets/' + as1.id + '/fix', { check_id: 'faq' });
-    assert.strictEqual(d.status, 200); assert.strictEqual(d.body.project.name, 'General To-Dos');
+    assert.strictEqual(d.status, 200); assert.strictEqual(d.body.project.name, 'SEO & AISO', 'health fixes go to the client’s SEO project');
     assert.ok(/FAQ section/.test(d.body.task.title)); assert.strictEqual(d.body.item.checks.faq.task_id, d.body.task.id);
+    assert.strictEqual(d.body.task.source, 'health');
+    const seoPid = d.body.project.id; const fixTask = d.body.task;
     d = await dj('POST', '/assets/' + as1.id + '/fix', { title: 'Add an FAQ' }); assert.strictEqual(d.status, 200);
+    assert.strictEqual(d.body.project.id, seoPid, 'the same SEO project is reused');
+    const fixTask2 = d.body.task; assert.ok(fixTask2.position > fixTask.position);
+    // moving tasks between a client's projects, bulk actions and ordering
+    const web = (await dj('POST', '/projects', { client_id: hc.id, name: 'Website Build' })).body.item;
+    d = await dj('POST', '/tasks/bulk', { ids: [fixTask.id], action: 'move', project_id: web.id });
+    assert.strictEqual(d.status, 200); assert.strictEqual(d.body.moved, 1); assert.strictEqual(d.body.project.name, 'Website Build');
+    d = await dj('GET', '/tasks?project_id=' + web.id); assert.deepStrictEqual(d.body.items.map((t) => t.id), [fixTask.id]);
+    d = await dj('GET', '/tasks?project_id=' + seoPid); assert.deepStrictEqual(d.body.items.map((t) => t.id), [fixTask2.id]);
+    const otherClient = (await dj('POST', '/clients', { name: 'Pat Lee', company: 'Other Co' })).body.item;
+    const otherProject = (await dj('POST', '/projects', { client_id: otherClient.id, name: 'Other Project' })).body.item;
+    d = await dj('POST', '/tasks/bulk', { ids: [fixTask.id], action: 'move', project_id: otherProject.id });
+    assert.strictEqual(d.status, 400, 'tasks never move to another client');
+    d = await dj('POST', '/tasks/bulk', { ids: [fixTask.id, fixTask2.id], action: 'move', project_id: seoPid }); assert.strictEqual(d.body.moved, 1);
+    d = await dj('POST', '/projects/' + seoPid + '/order', { ids: [fixTask.id, fixTask2.id] }); assert.strictEqual(d.status, 200);
+    d = await dj('GET', '/tasks?project_id=' + seoPid);
+    assert.deepStrictEqual(d.body.items.sort((a, b) => a.position - b.position).map((t) => t.id), [fixTask.id, fixTask2.id]);
+    d = await dj('POST', '/tasks/bulk', { ids: [fixTask.id, fixTask2.id], action: 'done' }); assert.strictEqual(d.body.updated, 2);
+    d = await dj('GET', '/tasks/' + fixTask.id); assert.strictEqual(d.body.item.done, true); assert.ok(d.body.item.done_at);
+    d = await dj('POST', '/tasks/bulk', { ids: [fixTask.id, fixTask2.id], action: 'reopen' }); assert.strictEqual(d.body.updated, 2);
+    d = await dj('POST', '/tasks/bulk', { ids: [], action: 'done' }); assert.strictEqual(d.status, 400);
+    await dj('DELETE', '/projects/' + otherProject.id); await dj('DELETE', '/clients/' + otherClient.id);
+    ok('tasks: health fixes land in the SEO project; tasks move between a client’s projects, reorder and update in bulk');
     d = await dj('POST', '/assets/' + internal.id + '/fix', { check_id: 'faq' }); assert.strictEqual(d.status, 400);
     d = await dj('POST', '/assets/' + internal.id + '/client', { client_id: hc.id }); assert.strictEqual(d.body.item.client_id, hc.id);
     d = await dj('POST', '/assets/' + internal.id + '/client', { client_id: null }); assert.strictEqual(d.body.item.client_id, null);
