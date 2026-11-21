@@ -129,7 +129,7 @@ function invoiceEmail_(p) {
 }
 
 // Quote emails from the Desk: "your quote is ready", the signed copy (with a PDF attached), and decline notices.
-// When record_html is sent, it's turned into a PDF, attached, and returned (base64) so the Desk can file it.
+// The signed copy arrives with pdf_b64: the site's branded PDF, attached as-is.
 function quoteEmail_(p) {
   var expected = PropertiesService.getScriptProperties().getProperty('PAYMENTS_TOKEN');
   if (!expected || p.token !== expected) return json_({ ok: false, error: 'unauthorized' });
@@ -159,13 +159,12 @@ function quoteEmail_(p) {
 
   var opts = { to: to.join(','), replyTo: NOTIFY_TO, name: 'Aethera Digital', subject: subject, body: text, htmlBody: html };
   if (p.cc) opts.cc = String(p.cc);
-  var pdf = null;
-  if (p.record_html) {
-    pdf = Utilities.newBlob(String(p.record_html), MimeType.HTML, 'record.html').getAs(MimeType.PDF).setName(String(p.pdf_name || 'Signed quote.pdf'));
-    opts.attachments = [pdf];
+  // The site sends its branded signed-quote PDF ready-made; it's attached as-is.
+  if (p.pdf_b64) {
+    opts.attachments = [Utilities.newBlob(Utilities.base64Decode(String(p.pdf_b64)), MimeType.PDF, String(p.pdf_name || 'Signed quote.pdf'))];
   }
   MailApp.sendEmail(opts);
-  return json_({ ok: true, pdf: pdf ? Utilities.base64Encode(pdf.getBytes()) : null });
+  return json_({ ok: true });
 }
 
 function esc_(v) {

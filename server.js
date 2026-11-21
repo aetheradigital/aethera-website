@@ -855,6 +855,7 @@ async function deskApi(req, res, url) {
 //   dated payments are invoiced on their date by the scheduler below, milestone payments wait for "Bill Now",
 //   monthly lines start a Stripe subscription (send-invoice, on the quote's monthly start date).
 const quotesLib = require('./lib/quotes');
+const quotePdf = require('./lib/quote-pdf');
 const QUOTE_TOKEN_RE = /^[A-Za-z0-9_-]{24,64}$/;
 const SIGNATURE_MAX = 300 * 1024;
 const quoteLocks = new Set();
@@ -924,6 +925,15 @@ function publicQuote(q, client, terms) {
   return out;
 }
 
+// The branded signed PDF, for whoever holds the quote's private link (the client, from the page or their portal).
+async function quotePdfGet(req, res, url) {
+  if (limited(req, 20, 'quote-pdf')) return json(res, 429, { error: 'Too many requests. Please wait a minute.' });
+  await deskInit();
+  const q = await findQuoteByToken(url.searchParams.get('t'));
+  if (!q || q.status !== 'accepted' || !q.acceptance) return json(res, 404, { error: 'We couldn’t find a signed quote at that link.' });
+  const client = await desk.get('client', q.client_id);
+  return sendPdf(res, signedPdf(q, client, await termsVersion(q.acceptance.terms_version)), signedPdfName(q));
+}
 async function quotePublicGet(req, res, url) {
   if (limited(req, 60, 'quote')) return json(res, 429, { error: 'Too many requests. Please wait a minute.' });
   await deskInit();
@@ -1095,64 +1105,51 @@ function scheduleQuoteBilling() {
 }
 
 // ---------- signed copy ----------
-function signedQuoteHtml(q, client, terms) {
-  const a = q.acceptance; const t = quotesLib.totals(q, a.selected);
-  const m = function (c) { return money(c, 'usd'); };
-  const items = quotesLib.includedItems(q, a.selected);
-  const row = function (it) {
-    const l = t.lines[it.id];
-    return '<tr><td><b>' + escHtml(it.name) + '</b>' + (it.optional ? ' <span class="tag">Add-on</span>' : '') + (it.description ? '<br><span class="mute">' + escHtml(it.description) + '</span>' : '') + (it.timeline ? '<br><span class="mute">' + escHtml(it.timeline) + '</span>' : '') + '</td>' +
-      '<td class="n">' + (it.pricing === 'hours' ? escHtml(it.hours) + ' h' : '—') + '</td><td class="n">' + m(l.amount) + (it.billing === 'monthly' ? '/mo' : '') + '</td></tr>';
-  };
-  const oneTime = items.filter(function (it) { return it.billing !== 'monthly'; });
-  const monthly = items.filter(function (it) { return it.billing === 'monthly'; });
-  const sched = quotesLib.installments(q, t.total);
-  const whenText = function (s) { return s.when === 'signing' ? 'On signing' : s.when === 'date' ? longDate(s.date) : 'At milestone'; };
-  const trail = (q.events || []).filter(function (e) { return ['sent', 'viewed', 'accepted'].indexOf(e.what) >= 0; });
-  return '<!doctype html><html><head><meta charset="utf-8"><title>' + escHtml(q.number) + ' signed</title><style>' +
-    'body{font-family:Helvetica,Arial,sans-serif;color:#111;font-size:11pt;line-height:1.45;margin:36px}h1{font-size:22pt;font-weight:300;margin:4px 0 2px}h2{font-size:10pt;letter-spacing:2px;text-transform:uppercase;margin:22px 0 8px;border-bottom:1px solid #111;padding-bottom:4px}' +
-    'table{width:100%;border-collapse:collapse}td,th{padding:6px 4px;border-bottom:1px solid #ddd;vertical-align:top;text-align:left}.n{text-align:right;white-space:nowrap}.mute{color:#666;font-size:9.5pt}.tag{font-size:8pt;border:1px solid #999;border-radius:8px;padding:0 5px}' +
-    '.box{background:#F4F2EE;padding:12px 14px;margin:10px 0}.sig img{height:70px}.small{font-size:8.5pt;color:#555;word-break:break-all}.eye{font-size:9pt;letter-spacing:3px;text-transform:uppercase;color:#555}' +
-    '</style></head><body>' +
-    '<p class="eye">Aethera Digital · Signed Quote</p><h1>' + escHtml(q.title) + '</h1><p class="mute">Quote ' + escHtml(q.number) + ' · Issued ' + escHtml(longDate(q.issued)) + '</p>' +
-    (q.summary ? '<p>' + escHtml(q.summary) + '</p>' : '') +
-    '<table><tr><td><b>Prepared for</b><br>' + escHtml(client ? client.name || '' : '') + (client && client.company ? '<br>' + escHtml(client.company) : '') + '</td><td><b>Prepared by</b><br>' + escHtml(q.prepared_by || 'Aethera Digital') + '<br>Aethera Digital · hello@aetheradigital.com</td></tr></table>' +
-    (oneTime.length ? '<h2>Project Scope</h2><table><tr><th>Phase</th><th class="n">Hours</th><th class="n">Amount</th></tr>' + oneTime.map(row).join('') + '</table>' +
-      '<div class="box"><table>' +
-      (t.rate_discount ? '<tr><td>Standard price (' + t.hours + ' h × $' + q.standard_rate + '/hr)</td><td class="n">' + m(t.standard) + '</td></tr><tr><td>Rate discount ($' + q.standard_rate + ' → $' + q.rate + '/hr)</td><td class="n">−' + m(t.rate_discount) + '</td></tr>' : '<tr><td>Subtotal</td><td class="n">' + m(t.subtotal) + '</td></tr>') +
-      (t.startup_discount ? '<tr><td>Startup discount (' + t.startup_pct + '%, −' + t.startup_hours + ' h)</td><td class="n">−' + m(t.startup_discount) + '</td></tr>' : '') +
-      '<tr><td><b>Project total</b></td><td class="n"><b>' + m(t.total) + '</b></td></tr></table></div>' : '') +
-    (monthly.length ? '<h2>Monthly Services</h2><table>' + monthly.map(row).join('') + '<tr><td><b>Monthly total</b> (starts ' + escHtml(longDate(q.monthly_start && q.monthly_start > a.at.slice(0, 10) ? q.monthly_start : a.at.slice(0, 10))) + ', month-to-month)</td><td></td><td class="n"><b>' + m(t.monthly) + '/mo</b></td></tr></table>' : '') +
-    (sched.length ? '<h2>Payment Schedule</h2><table>' + sched.map(function (s) { return '<tr><td>' + escHtml(s.label) + '</td><td>' + s.percent + '%</td><td>' + escHtml(whenText(s)) + '</td><td class="n">' + m(s.amount) + '</td></tr>'; }).join('') + '</table>' : '') +
-    (q.included ? '<h2>Included</h2><p style="white-space:pre-line">' + escHtml(q.included) + '</p>' : '') +
-    (q.not_included ? '<h2>Not Included</h2><p style="white-space:pre-line">' + escHtml(q.not_included) + '</p>' : '') +
-    (q.notes ? '<h2>Notes</h2><p style="white-space:pre-line">' + escHtml(q.notes) + '</p>' : '') +
-    '<h2>Terms of Service (Version ' + terms.version + ')</h2><p style="white-space:pre-line;font-size:9.5pt">' + escHtml(terms.body) + '</p>' +
-    '<h2>Acceptance</h2><table><tr><td class="sig" style="width:55%"><img src="' + a.signature + '" alt="Signature"><br><b>' + escHtml(a.name) + '</b>' + (a.title ? ', ' + escHtml(a.title) : '') + '<br>' + escHtml(a.email) + '<br>Signed ' + escHtml(stamp(a.at)) + '</td>' +
-    '<td><b>' + escHtml(q.prepared_by || 'Aethera Digital') + '</b><br>Aethera Digital<br>Issued ' + escHtml(longDate(q.issued)) + '</td></tr></table>' +
-    '<h2>Audit Trail</h2><table class="small">' + trail.map(function (e) { return '<tr><td>' + escHtml(stamp(e.at)) + '</td><td>' + escHtml({ sent: 'Sent to client', viewed: 'Opened by client', accepted: 'Signed by ' + a.name }[e.what]) + (e.ip ? ' · IP ' + escHtml(e.ip) : '') + '</td></tr>'; }).join('') + '</table>' +
-    '<p class="small">Browser: ' + escHtml(a.user_agent) + '<br>Document fingerprint (SHA-256): ' + escHtml(a.fingerprint) + '</p>' +
-    '</body></html>';
+// The branded signed-quote PDF (lib/quote-pdf.js): what's downloaded, emailed and filed.
+function signedPdf(q, client, terms) {
+  return quotePdf.signedQuotePdf(q, client, terms, quotesLib, { money: function (c) { return money(c, 'usd'); }, longDate: longDate, stamp: stamp });
+}
+function signedPdfName(q) { return (q.number || 'Quote') + ' signed.pdf'; }
+function sendPdf(res, buf, name) {
+  return send(res, 200, buf, { 'Content-Type': 'application/pdf', 'Content-Disposition': 'attachment; filename="' + name.replace(/[^A-Za-z0-9 ._-]/g, '_') + '"', 'Cache-Control': 'no-store' });
+}
+// Files the signed PDF with the client (shared, so it shows in their portal) unless it's already there.
+async function fileSignedPdf(q, client, terms, buf) {
+  if (!client) return null;
+  if (q.signed_file_id && await desk.getFileMeta(q.signed_file_id)) return q.signed_file_id;
+  buf = buf || signedPdf(q, client, terms);
+  if (!buf.length || buf.length >= MAX_FILE_BYTES) return null;
+  const f = await storeFile({ client_id: client.id, name: signedPdfName(q), mime: 'application/pdf', category: 'contract', content: buf, shared: true, uploaded_by: 'aethera' });
+  await desk.update('quote', q.id, { signed_file_id: f.id });
+  return f.id;
 }
 
+// Files the branded PDF first (so the client has it even if email fails), then emails it to the signer.
 async function sendSignedCopy(q, client, terms) {
+  const buf = signedPdf(q, client, terms);
+  try { await fileSignedPdf(q, client, terms, buf); } catch (e) { console.error('quote_signed_file_failed', q.id, e.message); }
   if (!NOTIFY_URL) return;
   const a = q.acceptance; const t = quotesLib.totals(q, a.selected);
   const to = [a.email]; if (client && client.email && client.email.toLowerCase() !== a.email) to.push(client.email);
   const first = (q.billing || []).find(function (b) { return b.status === 'invoiced'; });
-  const out = await quoteEmail({
+  await quoteEmail({
     to: to.join(','), cc: 'hello@aetheradigital.com', name: a.name,
     subject: 'Signed: ' + q.title + ' (Quote ' + q.number + ')', heading: 'Thank you. Your quote is signed.',
-    intro: 'Here’s your signed copy of quote ' + q.number + ' for ' + q.title + '.' + (first ? ' Your first invoice (' + money(first.amount, 'usd') + ') is on its way in a separate email.' : ''),
+    intro: 'Here’s your signed copy of quote ' + q.number + ' for ' + q.title + ', attached as a PDF.' + (first ? ' Your first invoice (' + money(first.amount, 'usd') + ') is on its way in a separate email.' : ''),
     amount_label: t.total ? 'Project Total' : 'Monthly', amount: t.total ? money(t.total, 'usd') : money(t.monthly, 'usd') + '/mo',
-    url: quoteUrl(publicOrigin(), q), button: 'View Signed Quote', record_html: signedQuoteHtml(q, client, terms), pdf_name: q.number + ' signed.pdf'
+    url: quoteUrl(publicOrigin(), q), button: 'View Signed Quote', pdf_b64: buf.toString('base64'), pdf_name: signedPdfName(q)
   });
-  if (out && out.pdf && client) {
-    const buf = Buffer.from(out.pdf, 'base64');
-    if (buf.length && buf.length < MAX_FILE_BYTES) {
-      const f = await storeFile({ client_id: client.id, name: q.number + ' signed.pdf', mime: 'application/pdf', category: 'contract', content: buf, shared: true, uploaded_by: 'aethera' });
-      await desk.update('quote', q.id, { signed_file_id: f.id });
-    }
+}
+
+// Signed quotes from before the branded PDF existed (or whose filing failed) get theirs filed once at startup.
+async function backfillSignedPdfs() {
+  for (const q of await desk.allOf('quote')) {
+    if (q.status !== 'accepted' || !q.acceptance || q.signed_file_id) continue;
+    try {
+      const client = await desk.get('client', q.client_id);
+      const id = await fileSignedPdf(q, client, await termsVersion(q.acceptance.terms_version));
+      if (id) console.log('quote_signed_pdf_backfilled ' + JSON.stringify({ id: q.id, number: q.number, file: id }));
+    } catch (e) { console.error('quote_signed_pdf_backfill_failed', q.id, e.message); }
   }
 }
 
@@ -1220,6 +1217,10 @@ async function quotesApi(req, res, p, m, url) {
     if (!action && m === 'DELETE') {
       if (q.status === 'accepted') return json(res, 409, { error: 'Signed quotes are kept as a record and can’t be deleted.' });
       await desk.remove('quote', q.id); return json(res, 200, { ok: true });
+    }
+    if (action === 'pdf' && m === 'GET') {
+      if (q.status !== 'accepted' || !q.acceptance) return json(res, 409, { error: 'This quote hasn’t been signed.' });
+      return sendPdf(res, signedPdf(q, client, await termsVersion(q.acceptance.terms_version)), signedPdfName(q));
     }
     if (m !== 'POST') return json(res, 405, { error: 'Method not allowed' });
     // Removing a signed quote (for tests and mistakes): voids the open invoices it created, stops its monthly billing,
@@ -2103,7 +2104,14 @@ async function portalApi(req, res, url) {
   }
 
   // quotes: log the open, then go to the quote's own review & sign page
-  let mm = p.match(/^\/quotes\/(quo_[A-Za-z0-9_-]+)$/);
+  let mm = p.match(/^\/quotes\/(quo_[A-Za-z0-9_-]+)\/pdf$/);
+  if (mm && m === 'GET') {
+    const q = await desk.get('quote', mm[1]);
+    if (!q || q.client_id !== s.client.id || q.status !== 'accepted' || !q.acceptance) return json(res, 404, { error: 'Signed quote not found.' });
+    await clientAudit(req, s, 'quote', 'Downloaded signed quote', (q.number || '') + ' · ' + (q.title || ''));
+    return sendPdf(res, signedPdf(q, s.client, await termsVersion(q.acceptance.terms_version)), signedPdfName(q));
+  }
+  mm = p.match(/^\/quotes\/(quo_[A-Za-z0-9_-]+)$/);
   if (mm && m === 'GET') {
     const q = await desk.get('quote', mm[1]);
     if (!q || q.client_id !== s.client.id || !q.token || q.status === 'draft' || q.status === 'void') return json(res, 404, { error: 'Quote not found.' });
@@ -2474,6 +2482,7 @@ const server = http.createServer(async function (req, res) {
     if (p === '/api/invoice-lookup' && req.method === 'POST') return await lookupInvoice(req, res);
     if (p === '/api/subscribe' && req.method === 'POST') return await subscribe(req, res);
     if (p === '/api/quote' && req.method === 'GET') return await quotePublicGet(req, res, url);
+    if (p === '/api/quote/pdf' && req.method === 'GET') return await quotePdfGet(req, res, url);
     if (p === '/api/quote/accept' && req.method === 'POST') return await quoteAccept(req, res);
     if (p === '/api/quote/decline' && req.method === 'POST') return await quoteDecline(req, res);
     if (p === '/api/stripe/webhook' && req.method === 'POST') return await stripeWebhook(req, res);
@@ -2492,6 +2501,7 @@ const server = http.createServer(async function (req, res) {
 if (require.main === module) {
   scheduleReportDrafts();
   scheduleQuoteBilling();
+  if (process.env.SIGNED_PDF_BACKFILL !== 'off') setTimeout(function () { deskInit().then(backfillSignedPdfs).catch(function (e) { console.error('quote_signed_pdf_backfill_failed', e.message); }); }, 10000).unref();
   server.listen(PORT, function () {
     console.log('aethera site listening on ' + PORT + (SECRET ? '' : ' (Stripe not configured)') + (ADMIN_PASSWORD ? '' : ' (admin disabled: set ADMIN_PASSWORD)'));
   });

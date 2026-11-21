@@ -435,7 +435,8 @@
           amount ? h('p', { style: 'margin:0;font-family:Raleway,sans-serif;font-weight:300;font-size:40px;line-height:1', text: amount }) : null,
           h('p', { class: 'mute', style: 'margin:0;font-size:14px', text: meta }),
           h('div', { class: 'acts' }, h('a', { class: 'pill small' + (waiting ? '' : ' ghost'), href: '/api/portal/quotes/' + encodeURIComponent(q.id), target: '_blank', rel: 'noopener',
-            onclick: function () { setTimeout(refreshData, 4000); } }, waiting ? 'Review & sign' : q.state === 'accepted' ? 'View signed quote' : 'View quote', icon('arrow'))));
+            onclick: function () { setTimeout(refreshData, 4000); } }, waiting ? 'Review & sign' : q.state === 'accepted' ? 'View signed quote' : 'View quote', icon('arrow')),
+            q.state === 'accepted' ? h('a', { class: 'pill small ghost', href: '/api/portal/quotes/' + encodeURIComponent(q.id) + '/pdf', download: '' }, 'Download PDF') : null));
       })) : h('div', { class: 'card emptycard' }, h('p', { class: 'empty', text: 'Quotes we send you will appear here.' })));
   }
 

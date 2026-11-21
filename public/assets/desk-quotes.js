@@ -112,7 +112,8 @@
       var acts = [];
       if (editable) acts.push(btn(st === 'draft' ? 'Send to Client' : 'Resend', function () { sendQuote(q, c, r, reload); }));
       if (r.url && st !== 'draft') acts.push(btn('Copy Link', function () { D.copy(r.url); }, 'ghost'));
-      if (r.url) acts.push(h('a', { class: 'pill small ghost', href: r.url + (q.status === 'accepted' ? '' : '&preview=1'), target: '_blank', rel: 'noopener', text: q.status === 'accepted' ? 'Signed Copy ↗' : 'Preview ↗' }));
+      if (q.status === 'accepted') acts.push(h('a', { class: 'pill small ghost', href: '/api/admin/desk/quotes/' + q.id + '/pdf', download: '', text: 'Signed Copy (PDF)' }));
+      if (r.url) acts.push(h('a', { class: 'pill small ghost', href: r.url + (q.status === 'accepted' ? '' : '&preview=1'), target: '_blank', rel: 'noopener', text: q.status === 'accepted' ? 'Client Page ↗' : 'Preview ↗' }));
       else acts.push(btn('Preview', function () { toast('Send the quote (or choose “Get Link Only”) to create its private link', true); }, 'ghost'));
       if (editable) acts.push(btn('Edit', function () { location.hash = '#/quotes/' + q.id + '/edit'; }, 'ghost'));
       acts.push(btn('Duplicate', function () { desk('POST', '/quotes/' + q.id + '/duplicate').then(function (x) { toast('Copied to ' + x.item.number); location.hash = '#/quotes/' + x.item.id + '/edit'; }).catch(function (x) { toast(x.message, true); }); }, 'ghost'));
@@ -179,7 +180,8 @@
           h('dt', { text: 'Add-Ons Chosen' }), h('dd', { text: (q.items || []).filter(function (i) { return (a.selected || []).indexOf(i.id) >= 0; }).map(function (i) { return i.name; }).join(', ') || 'None' }),
           h('dt', { text: 'Fingerprint' }), h('dd', { class: 'mono', text: a.fingerprint }))),
       h('div', { class: 'toolbar', style: 'margin:14px 0 0' },
-        q.signed_file_id ? h('a', { class: 'pill small ghost', href: '/api/admin/desk/files/' + q.signed_file_id, target: '_blank', rel: 'noopener', text: 'Signed PDF ↗' }) : null,
+        h('a', { class: 'pill small ghost', href: '/api/admin/desk/quotes/' + q.id + '/pdf', download: '', text: 'Download Signed PDF' }),
+        q.signed_file_id ? h('span', { class: 'mute', style: 'font-size:13px;align-self:center', text: 'Saved to the client’s Files' }) : null,
         r.email ? btn('Email Signed Copy Again', function (e) { e.target.disabled = true; desk('POST', '/quotes/' + q.id + '/resend-signed').then(function () { toast('Signed copy emailed'); }).catch(function (x) { toast(x.message, true); }).then(function () { e.target.disabled = false; }); }, 'ghost') : null));
   }
 
