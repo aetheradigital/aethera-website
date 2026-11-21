@@ -1523,12 +1523,13 @@ async function generalTodos(clientId) {
   const project = projects.find(isGeneralTodos);
   return project || desk.create('project', { client_id: clientId, name: 'General To-Dos', status: 'in_progress', description: 'Follow-ups from email and meetings.' }, { client_id: clientId });
 }
-// Digital Health fixes go to the client's SEO project; if there isn't one, "SEO & AISO" is created.
+// Digital Health fixes go to the client's SEO project; if there isn't one, "SEO & AISO" is created, hidden from the
+// client portal until it's switched to visible in the Desk.
 async function seoProject(clientId) {
   const found = (await desk.list('project', { client_id: clientId })).filter(isSeoProject)
     .sort(function (a, b) { return (a.status === 'done' ? 1 : 0) - (b.status === 'done' ? 1 : 0) || (a.created_at < b.created_at ? -1 : 1); });
   if (found.length) return found[0];
-  return desk.create('project', { client_id: clientId, name: 'SEO & AISO', status: 'in_progress', description: 'Search and AI-search fixes from Digital Health.' }, { client_id: clientId });
+  return desk.create('project', { client_id: clientId, name: 'SEO & AISO', status: 'in_progress', hidden: true, description: 'Search and AI-search fixes from Digital Health.' }, { client_id: clientId });
 }
 async function nextPosition(projectId) {
   const list = await desk.list('task', { project_id: projectId });
@@ -2027,7 +2028,8 @@ async function portalData(req, res, s) {
   const fileById = {}; shared.forEach(function (f) { fileById[f.id] = f; });
   const sent = reports.filter(function (r) { return r.status === 'sent'; }).sort(function (a, b) { return a.period < b.period ? 1 : -1; });
   const groups = deskLib.reportGroupsFor(c.services);
-  const visibleProjects = projects.filter(function (p) { return String(p.name || '').trim().toLowerCase() !== 'general to-dos'; })
+  // General To-Dos never shows in the portal; any other project can be hidden from the client in the Desk.
+  const visibleProjects = projects.filter(function (p) { return !isGeneralTodos(p) && !p.hidden; })
     .sort(function (a, b) { return (a.status === 'done' ? 1 : 0) - (b.status === 'done' ? 1 : 0) || (a.created_at < b.created_at ? -1 : 1); });
   const latestHealth = sent.find(function (r) { return r.metrics && typeof r.metrics.health_score === 'number'; });
   const prevHealth = latestHealth && sent.find(function (r) { return r.period < latestHealth.period && r.metrics && typeof r.metrics.health_score === 'number'; });

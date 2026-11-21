@@ -180,6 +180,7 @@
       h('dl', { class: 'dl' }, row('gsc', c.gsc_site), row('ga4', c.ga4_property)),
       !META.collector ? h('p', { class: 'was bad', style: 'margin-top:12px', text: 'The reporting script isn’t set up yet: DESK_COLLECTOR_TOKEN is missing on the server.' }) : null);
   }
+  function isGeneralProject(p) { return String((p && p.name) || '').trim().toLowerCase() === 'general to-dos'; }
   function editProject(p, clientId, then) {
     var fields = [
       { name: 'name', label: 'Project Name', required: true },
@@ -187,10 +188,12 @@
       { name: 'start', label: 'Start', type: 'date', half: true }, { name: 'due', label: 'Due', type: 'date', half: true },
       { name: 'description', label: 'Scope & Notes', type: 'textarea', rows: 4 }
     ];
+    if (!p || !isGeneralProject(p)) fields.splice(5, 0, { name: 'hidden', label: 'Client Portal', type: 'select', options: [['false', 'Visible to Client'], ['true', 'Hidden From Client']] });
     if (!p) fields.splice(1, 0, { name: 'template', label: 'Start From a Checklist', type: 'select', options: [['', 'None']].concat(Object.keys(META.templates).map(function (k) { return [k, META.templates[k].label + ' (' + META.templates[k].count + ' tasks)']; })) });
     modal({ title: p ? 'Edit Project' : 'New Project', fields: fields, values: p || { status: 'planned' }, submit: p ? 'Save Changes' : 'Create Project',
       onSubmit: function (d) {
         if (!d.name) throw new Error('Enter a project name.');
+        if ('hidden' in d) d.hidden = d.hidden === 'true';
         var tpl = d.template; delete d.template;
         if (p) return desk('PATCH', '/projects/' + p.id, d).then(function (r) { toast('Project saved'); then(r.item); });
         d.client_id = clientId;
@@ -486,6 +489,7 @@
         return h('a', { class: 'pc', href: '#/projects/' + p.id },
           h('div', { style: 'display:flex;justify-content:space-between;gap:8px;align-items:flex-start' }, h('b', { text: p.name }), badge(p.status)),
           h('small', { text: [p.owner, p.due ? 'Due ' + day(p.due) : ''].filter(Boolean).join(' · ') || ' ' }),
+          p.hidden || isGeneralProject(p) ? h('small', { class: 'hid', text: 'Hidden From Client' }) : null,
           h('div', { class: 'bar' }, h('i', { style: 'width:' + pr.pct + '%' })), h('small', { style: 'margin-top:6px', text: pr.d + ' of ' + pr.t + ' tasks done' }));
       })) : h('div', { class: 'panel' }, emptyLine('No projects yet. Create one and start it from a checklist (website, SEO, ads, branding, social or onboarding).')));
   }
@@ -622,6 +626,7 @@
               var overdue = p.due && p.due < today() && s !== 'done';
               var card = h('a', { class: 'pc', href: '#/projects/' + p.id, title: 'Drag to move · Click to open' }, h('b', { text: p.name }), h('small', { text: cl.company || cl.name || '' }),
                 h('small', { style: overdue ? 'color:var(--err)' : '', text: [p.owner, p.due ? (overdue ? 'Overdue · ' : 'Due ') + day(p.due) : ''].filter(Boolean).join(' · ') }),
+                p.hidden && !isGeneral(p) ? h('small', { class: 'hid', text: 'Hidden From Client' }) : null,
                 pr.t ? h('div', { class: 'bar' }, h('i', { style: 'width:' + pr.pct + '%' })) : null);
               draggable(card, p);
               return card;
@@ -801,13 +806,20 @@
         tplSel.addEventListener('change', function () { if (!tplSel.value) return; desk('POST', '/projects/' + p.id + '/checklist', { template: tplSel.value }).then(function (x) { toast(x.tasks.length + ' tasks added'); reload(); }); });
         var statusSel = h('select', { class: 'st ' + p.status, 'aria-label': 'Project status', onchange: function (e) { desk('PATCH', '/projects/' + p.id, { status: e.target.value }).then(function () { e.target.className = 'st ' + e.target.value; toast('Status updated'); }); } },
           META.project_status.map(function (s) { return h('option', { value: s, text: lab(s), selected: s === p.status ? 'selected' : null }); }));
+        var general = isGeneralProject(p);
+        var portalCell = general ? h('span', { text: 'Always Hidden From Client' }) : h('span', { class: 'portalvis' },
+          h('span', { class: p.hidden ? 'vis off' : 'vis on', text: p.hidden ? 'Hidden From Client' : 'Visible to Client' }),
+          h('button', { class: 'pill small ghost', type: 'button', text: p.hidden ? 'Show in Portal' : 'Hide From Portal', onclick: function () {
+            desk('PATCH', '/projects/' + p.id, { hidden: !p.hidden }).then(function () { toast(p.hidden ? 'Clients can now see this project' : 'Hidden from the client portal'); reload(); }).catch(function (x) { toast(x.message, true); });
+          } }));
         render(pageHead(c.company || c.name, [p.name, ' ', statusSel], [btn('Edit', function () { editProject(p, p.client_id, reload); }, 'ghost'), btn('Delete', function () {
           if (!confirmDelete('this project and its tasks')) return; desk('DELETE', '/projects/' + p.id).then(function () { toast('Project deleted'); location.hash = '#/clients/' + p.client_id + '/projects'; });
         }, 'ghost')], ['#/clients/' + p.client_id + '/projects', c.company || c.name]),
           h('div', { class: 'grid g2', style: 'grid-template-columns:minmax(0,2fr) minmax(0,1fr)' },
             h('div', { class: 'panel' }, h('h2', null, 'Tasks', count), h('div', { class: 'bar', style: 'margin:0 0 12px' }, bar), tools, empty, openUl, doneBox, addForm, h('div', { style: 'margin-top:12px' }, tplSel)),
             h('div', { class: 'panel' }, h('h2', null, 'Details'), h('dl', { class: 'dl', style: 'grid-template-columns:90px 1fr' },
-              h('dt', { text: 'Owner' }), h('dd', { text: p.owner || '—' }), h('dt', { text: 'Start' }), h('dd', { text: day(p.start) }), h('dt', { text: 'Due' }), h('dd', { text: day(p.due) })),
+              h('dt', { text: 'Owner' }), h('dd', { text: p.owner || '—' }), h('dt', { text: 'Start' }), h('dd', { text: day(p.start) }), h('dt', { text: 'Due' }), h('dd', { text: day(p.due) }),
+              h('dt', { text: 'Portal' }), h('dd', null, portalCell)),
               p.description ? h('p', { class: 'notes', style: 'margin-top:16px', text: p.description }) : null)));
         paint();
       });

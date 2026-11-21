@@ -415,3 +415,8 @@ textarea.terms{width:100%;font-size:15px;line-height:1.6}
 .donebox{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
 .donebox summary{cursor:pointer;color:var(--mute);font-size:13px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;padding:4px 0}
 .donebox summary:hover{color:#fff}
+.portalvis{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.vis{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line)}
+.vis.on{color:var(--sage);border-color:rgba(207,232,180,.35)}
+.vis.off,.pc .hid{color:var(--peach)}
+.vis.off{border-color:rgba(255,196,168,.35)}

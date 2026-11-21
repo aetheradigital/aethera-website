@@ -1079,6 +1079,20 @@ function request(port, method, p, body, headers) {
       assert.ok(j.activity.some((e) => e.event === 'Signed quote deleted'));
       ok('quotes: a signed test quote can be deleted from the Desk (typed confirmation; unpaid invoices voided; refused if paid)');
 
+      // A project can be hidden from the client portal and shown again from the Desk.
+      r = await request(port, 'POST', '/api/admin/desk/projects', { client_id: alpha.id, name: 'Visibility Check' }, A);
+      const vp = JSON.parse(r.body).item;
+      await request(port, 'POST', '/api/admin/desk/tasks', { project_id: vp.id, title: 'Internal fix' }, A);
+      const portalNames = async () => JSON.parse((await request(port, 'GET', '/api/portal/data', null, sa.cookie)).body).projects.map((x) => x.name);
+      assert.ok((await portalNames()).includes('Visibility Check'), 'projects are visible by default');
+      r = await request(port, 'PATCH', '/api/admin/desk/projects/' + vp.id, { hidden: true }, A);
+      assert.strictEqual(r.status, 200); assert.strictEqual(JSON.parse(r.body).item.hidden, true);
+      r = await request(port, 'GET', '/api/portal/data', null, sa.cookie);
+      assert.ok(!r.body.includes('Visibility Check') && !r.body.includes('Internal fix'), 'hidden project and its tasks stay out of the portal');
+      r = await request(port, 'PATCH', '/api/admin/desk/projects/' + vp.id, { hidden: false }, A);
+      assert.ok((await portalNames()).includes('Visibility Check'));
+      ok('projects: a project can be hidden from the client portal and shown again');
+
       // The second client signs in on its own and sees none of the first client's data.
       const sb = await signIn(EMAIL_B);
       r = await request(port, 'GET', '/api/portal/data', null, sb.cookie);
