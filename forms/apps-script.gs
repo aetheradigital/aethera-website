@@ -162,6 +162,8 @@ function quoteEmail_(p) {
   // The site sends its branded signed-quote PDF ready-made; it's attached as-is.
   if (p.pdf_b64) {
     opts.attachments = [Utilities.newBlob(Utilities.base64Decode(String(p.pdf_b64)), MimeType.PDF, String(p.pdf_name || 'Signed quote.pdf'))];
+  } else if (p.record_html) { // older site versions sent HTML to convert
+    opts.attachments = [Utilities.newBlob(String(p.record_html), MimeType.HTML, 'record.html').getAs(MimeType.PDF).setName(String(p.pdf_name || 'Signed quote.pdf'))];
   }
   MailApp.sendEmail(opts);
   return json_({ ok: true });
