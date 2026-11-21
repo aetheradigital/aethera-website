@@ -364,8 +364,8 @@ textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:
 .qitems .opt{white-space:nowrap;padding-top:14px}
 .qitems .lt{padding-top:14px;white-space:nowrap;text-align:right}
 .qitems .x{white-space:nowrap}
-.chk{display:inline-flex;align-items:center;gap:8px;font-size:14px;color:#D6D6DC;cursor:pointer}
-.chk input{width:18px;height:18px;accent-color:#C8B6FF}
+label.chk{display:inline-flex;align-items:center;gap:8px;font-size:14px;color:#D6D6DC;cursor:pointer;appearance:auto;width:auto;height:auto;border:0;border-radius:0}
+label.chk input{width:18px;height:18px;accent-color:#C8B6FF}
 .qsum{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin-top:18px;border-radius:18px;overflow:hidden;background:var(--line)}
 .qsum>div{background:#121217;padding:16px 18px;display:flex;flex-direction:column;gap:4px}
 .qsum small{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--mute);font-weight:600}
@@ -394,3 +394,24 @@ textarea.terms{width:100%;font-size:15px;line-height:1.6}
 .qitems td{padding:8px 6px}
 .qedit .toolbar select{width:auto;min-width:240px}
 .qitems .opt{width:96px}.qitems .lt{width:130px;padding-left:12px}.qitems .x{width:92px}
+
+/* ---------- project tasks ---------- */
+.tasks li{gap:10px}
+.tasks li.done .t{color:var(--mute);text-decoration:line-through;font-weight:400}
+.tasks li.picked{background:rgba(200,182,255,.06)}
+.tasks li.dragging{background:rgba(200,182,255,.1);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+.tasks .m{display:flex;gap:10px;flex-wrap:wrap;align-items:center;white-space:normal}
+.tasks .m .bad{color:var(--err);font-weight:600}
+.tasks .src{font-size:11px;letter-spacing:.06em;padding:2px 9px;border-radius:999px;border:1px solid var(--line);color:#D6D6DC}
+.tasks .src.health{color:var(--sage);border-color:rgba(207,232,180,.35)}
+.tasks .src.email,.tasks .src.meeting,.tasks .src.calendar{color:var(--sky);border-color:rgba(175,203,255,.35)}
+.tasks .grip{flex:none;width:22px;height:30px;border:0;background:transparent;color:var(--mute);font-size:15px;letter-spacing:-3px;cursor:grab;touch-action:none;border-radius:6px;padding:0}
+.tasks .grip:hover,.tasks .grip:focus-visible{color:#fff;background:rgba(255,255,255,.08)}
+.tasks .sel{flex:none;width:18px;height:18px;accent-color:#C8B6FF;margin:0 2px}
+.tasks .rowacts{opacity:.0;transition:opacity .15s}
+.tasks li:hover .rowacts,.tasks li:focus-within .rowacts{opacity:1}
+@media (hover:none){.tasks .rowacts{opacity:1}}
+.tasktools{margin:0 0 6px}
+.donebox{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+.donebox summary{cursor:pointer;color:var(--mute);font-size:13px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;padding:4px 0}
+.donebox summary:hover{color:#fff}

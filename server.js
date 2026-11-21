@@ -586,7 +586,8 @@ const deskLib = require('./lib/desk');
 const desk = deskLib.createStore(process.env.DATABASE_URL || '');
 let deskReady = null;
 function deskInit() {
-  if (!deskReady) deskReady = desk.init().catch(function (e) { deskReady = null; throw e; });
+  if (!deskReady) deskReady = desk.init().then(function () { return moveHealthTasksOnce().catch(function (e) { console.error('health_tasks_move_failed', e.message); }); })
+    .catch(function (e) { deskReady = null; throw e; });
   return deskReady;
 }
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
@@ -687,6 +688,40 @@ async function deskApi(req, res, url) {
       quotes: (await desk.list('quote', { client_id: c.id })).sort(function (a, b) { return a.created_at < b.created_at ? 1 : -1; }).map(function (q) { const o = {}; o[c.id] = c; return quoteSummary(q, o); }) });
   }
 
+  // Move, finish, reopen or delete several tasks at once. Moves stay within one client.
+  if (p === '/tasks/bulk' && m === 'POST') {
+    const body = (await readJson(req, 65536)) || {};
+    const ids = Array.isArray(body.ids) ? body.ids.filter(function (x) { return /^tas_[A-Za-z0-9_-]+$/.test(String(x)); }).slice(0, 300) : [];
+    if (!ids.length) return json(res, 400, { error: 'Choose at least one task.' });
+    if (body.action === 'move') {
+      const target = await desk.get('project', String(body.project_id || ''));
+      if (!target) return json(res, 400, { error: 'Choose a project.' });
+      const first = await desk.get('task', ids[0]);
+      if (!first || first.client_id !== target.client_id) return json(res, 400, { error: 'Tasks can only move between projects of the same client.' });
+      const moved = await moveTasks(ids, target);
+      return json(res, 200, { moved: moved.length, project: { id: target.id, name: target.name } });
+    }
+    if (body.action === 'done' || body.action === 'reopen') {
+      const done = body.action === 'done'; let n = 0;
+      for (const id of ids) { if (await desk.update('task', id, { done: done, done_at: done ? deskLib.localDate() : null })) n++; }
+      return json(res, 200, { updated: n });
+    }
+    if (body.action === 'delete') {
+      for (const id of ids) await desk.remove('task', id);
+      return json(res, 200, { deleted: ids.length });
+    }
+    return json(res, 400, { error: 'Unknown action.' });
+  }
+  // Save the order of a project's tasks after dragging.
+  mm = p.match(/^\/projects\/(pro_[A-Za-z0-9_-]+)\/order$/);
+  if (mm && m === 'POST') {
+    const body = (await readJson(req, 65536)) || {};
+    const ids = Array.isArray(body.ids) ? body.ids.map(String).slice(0, 500) : [];
+    const own = {}; (await desk.list('task', { project_id: mm[1] })).forEach(function (t) { own[t.id] = true; });
+    let pos = 0;
+    for (const id of ids) if (own[id]) await desk.update('task', id, { position: pos++ });
+    return json(res, 200, { ok: true });
+  }
   // apply a checklist template to a project
   mm = p.match(/^\/projects\/([a-z]{3}_[A-Za-z0-9_-]+)\/checklist$/);
   if (mm && m === 'POST') {
@@ -698,7 +733,7 @@ async function deskApi(req, res, url) {
     const existing = await desk.list('task', { project_id: pr.id });
     const created = [];
     for (let i = 0; i < tpl.tasks.length; i++) {
-      created.push(await desk.create('task', { title: tpl.tasks[i], done: false, position: existing.length + i, project_id: pr.id }, { client_id: pr.client_id, project_id: pr.id }));
+      created.push(await desk.create('task', { title: tpl.tasks[i], done: false, position: existing.length + i, project_id: pr.id, source: 'checklist' }, { client_id: pr.client_id, project_id: pr.id }));
     }
     return json(res, 200, { tasks: created });
   }
@@ -1478,11 +1513,64 @@ async function healthReview(req, res, id) {
   }
 }
 
-// A failed check or a Claude recommendation becomes a to-do in the client's General To-Dos.
+// Project helpers. "General To-Dos" is each client's catch-all for follow-ups from email and meetings.
+function isGeneralTodos(p) { return String((p && p.name) || '').trim().toLowerCase() === 'general to-dos'; }
+// A client's SEO project: any project with SEO, AISO or "AI search" in its name (open ones first).
+const SEO_PROJECT_RE = /\b(seo|aiso)\b|ai[\s-]*search/i;
+function isSeoProject(p) { return SEO_PROJECT_RE.test(String((p && p.name) || '')); }
 async function generalTodos(clientId) {
   const projects = await desk.list('project', { client_id: clientId });
-  let project = projects.find(function (p) { return String(p.name || '').toLowerCase() === 'general to-dos'; });
+  const project = projects.find(isGeneralTodos);
   return project || desk.create('project', { client_id: clientId, name: 'General To-Dos', status: 'in_progress', description: 'Follow-ups from email and meetings.' }, { client_id: clientId });
+}
+// Digital Health fixes go to the client's SEO project; if there isn't one, "SEO & AISO" is created.
+async function seoProject(clientId) {
+  const found = (await desk.list('project', { client_id: clientId })).filter(isSeoProject)
+    .sort(function (a, b) { return (a.status === 'done' ? 1 : 0) - (b.status === 'done' ? 1 : 0) || (a.created_at < b.created_at ? -1 : 1); });
+  if (found.length) return found[0];
+  return desk.create('project', { client_id: clientId, name: 'SEO & AISO', status: 'in_progress', description: 'Search and AI-search fixes from Digital Health.' }, { client_id: clientId });
+}
+async function nextPosition(projectId) {
+  const list = await desk.list('task', { project_id: projectId });
+  return list.reduce(function (m, t) { return Math.max(m, Number(t.position) || 0); }, -1) + 1;
+}
+// Move tasks to another project of the same client. Returns the tasks that moved.
+async function moveTasks(ids, target) {
+  let pos = await nextPosition(target.id); const moved = [];
+  for (const id of ids) {
+    const t = await desk.get('task', id);
+    if (!t || t.client_id !== target.client_id || t.project_id === target.id) continue;
+    await desk.reparent('task', t.id, target.id);
+    moved.push(await desk.update('task', t.id, { position: pos++ }));
+  }
+  return moved;
+}
+// One-time tidy-up: tasks Digital Health had put in General To-Dos move to each client's SEO project.
+async function moveHealthTasksOnce() {
+  if (await desk.seen('health-tasks-to-seo')) return;
+  const assets = (await desk.allOf('asset')).filter(function (a) { return a.client_id; });
+  const byClient = {};
+  for (const a of assets) {
+    const o = byClient[a.client_id] = byClient[a.client_id] || { ids: new Set(), names: [] };
+    Object.keys(a.checks || {}).forEach(function (k) { if (a.checks[k] && a.checks[k].task_id) o.ids.add(a.checks[k].task_id); });
+    if (a.name) o.names.push(' — ' + a.name);
+  }
+  let n = 0;
+  for (const cid of Object.keys(byClient)) {
+    const general = (await desk.list('project', { client_id: cid })).find(isGeneralTodos);
+    if (!general) continue;
+    const o = byClient[cid];
+    const tasks = (await desk.list('task', { project_id: general.id })).filter(function (t) {
+      return o.ids.has(t.id) || o.names.some(function (suffix) { return String(t.title || '').endsWith(suffix); });
+    }).sort(function (a, b) { return (a.position || 0) - (b.position || 0); });
+    if (!tasks.length) continue;
+    const target = await seoProject(cid);
+    const moved = await moveTasks(tasks.map(function (t) { return t.id; }), target);
+    for (const t of moved) await desk.update('task', t.id, { source: 'health' });
+    n += moved.length;
+  }
+  await desk.markSeen('health-tasks-to-seo');
+  if (n) console.log('health_tasks_moved ' + n);
 }
 async function healthFix(req, res, id) {
   const a = await desk.get('asset', id);
@@ -1492,11 +1580,10 @@ async function healthFix(req, res, id) {
   const check = body.check_id && healthLib.fields.checks({ [body.check_id]: {} }).value[body.check_id] ? body.check_id : null;
   const title = clip(body.title || '', 300);
   if (!check && !title) return json(res, 400, { error: 'Choose a fix.' });
-  const project = await generalTodos(a.client_id);
-  const existing = await desk.list('task', { project_id: project.id });
+  const project = await seoProject(a.client_id);
   const H = require('./public/assets/health.js');
   const text = check ? H.CHECK_BY_ID[check].name + ' — ' + a.name : title + ' — ' + a.name;
-  const task = await desk.create('task', { project_id: project.id, title: clip(text, 300), done: false, position: existing.length }, { client_id: a.client_id, project_id: project.id });
+  const task = await desk.create('task', { project_id: project.id, title: clip(text, 300), done: false, position: await nextPosition(project.id), source: 'health' }, { client_id: a.client_id, project_id: project.id });
   let item = a;
   if (check) {
     const checks = Object.assign({}, a.checks || {}); checks[check] = Object.assign({}, checks[check] || {}, { task_id: task.id });
@@ -1732,14 +1819,12 @@ async function acceptSuggestion(req, res, id) {
     project = await desk.get('project', String(body.project_id));
     if (!project || project.client_id !== s.client_id) return json(res, 400, { error: 'Choose one of this client’s projects.' });
   } else {
-    const projects = await desk.list('project', { client_id: s.client_id });
-    project = projects.find(function (p) { return String(p.name || '').toLowerCase() === 'general to-dos'; });
-    if (project && project.name !== 'General To-Dos') project = (await desk.update('project', project.id, { name: 'General To-Dos' })) || project;
-    project = project ||
-      await desk.create('project', { client_id: s.client_id, name: 'General To-Dos', status: 'in_progress', description: 'Follow-ups from email and meetings.' }, { client_id: s.client_id });
+    project = await generalTodos(s.client_id);
+    if (project.name !== 'General To-Dos') project = (await desk.update('project', project.id, { name: 'General To-Dos' })) || project;
   }
   const title = clip(body.title || s.title, 300);
-  const task = await desk.create('task', { project_id: project.id, title: title, done: false, due: s.due || null, owner: s.owner || null, position: Date.now() / 1e3 },
+  const task = await desk.create('task', { project_id: project.id, title: title, done: false, due: s.due || null, owner: s.owner || null, position: await nextPosition(project.id),
+    source: deskLib.TASK_SOURCE.indexOf(s.source) >= 0 ? s.source : undefined },
     { client_id: s.client_id, project_id: project.id });
   const updated = await desk.update('suggestion', s.id, { status: 'added', task_id: task.id });
   return json(res, 200, { suggestion: updated, task: task, project: { id: project.id, name: project.name } });
